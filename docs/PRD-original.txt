@@ -1,0 +1,206 @@
+PRD: AI organiser for saved TikToks
+4 Nov 2026 · @Hong Ting
+Overview and problem
+This product turns 500+ saved TikTok posts into an organised, searchable library in which every video keeps its own essence, instead of being blended into a generic summary.
+The problem. Saved posts (videos and carousels on career tips, content creation, health, fitness and more) pile up in TikTok's Favorites and never get found or used. TikTok offers no way to see what is inside them, group them by idea, or search by what was said.
+What exists today. Tools such as Quiki, Recall, Fabric and TokScript cover parts of this. In the research done so far, Fabric showed no bulk import of an existing backlog, TokScript caps imports at 50 videos, and carousel support was not confirmed for any of them. None was found to give a per-video entry with an AI-proposed, user-approved category tree and a pick-and-download step.
+The product. A local app on the owner's Mac that captures saved posts, extracts everything said or written in them, writes a faithful entry per video, organises entries into AI-proposed categories and subcategories the user approves, lets the user search by key idea, and downloads only the videos the user chooses.
+Goals and non-goals
+The product succeeds if the owner can find, trust and act on any saved tip without rewatching the video.
+Goals
+• Capture every saved post, videos and photo carousels, from the owner's TikTok account.
+• Extract all text for each post: caption, speech transcript, and text shown in slides or on screen.
+• Write one entry per video with 3 to 7 key points, action steps and verbatim specifics.
+• Propose a two-level category tree (category, then subcategory) that the user approves, and place each video in one primary and any extra subcategories.
+• Flag overlap between videos without merging them.
+• Let the user search by key idea.
+• Let the user tick videos, with AI suggestions, and download only those.
+Non-goals for version 1
+• Merging several videos into one summary.
+• Cloud hosting, accounts or billing.
+• Editing bullets by hand (not requested; fixes are limited to the three listed under corrections).
+• Posting to, or changing anything on, TikTok.
+• Redistributing or sharing downloaded videos.
+Users and scope
+The product is built for its owner first, runs locally on a Mac, and is designed so other users can be added later.
+• Primary user: the owner, with 500+ saved TikTok posts and a Mac. Version 1 is tuned to this one person's library.
+• Later users: other people with their own saved posts. Nothing in version 1 should block this, but accounts, hosting and billing are out of scope for now.
+• Content in scope: videos with speech, photo carousels, and videos whose content is mostly on-screen text. Other platforms (Instagram Reels, YouTube Shorts) are a later addition.
+• Where it runs: locally on the owner's Mac. Only text is sent out, to the AI service.
+Core principles
+Every design choice should protect what each saved video actually said.
+1. One video, one entry. Ten videos on systems thinking appear as ten entries, each with its own bullets, never as one blended summary.
+2. Do not over-summarise. Keep the essence of each video. Names, numbers, tools, book titles and frameworks stay word for word.
+3. Nothing invented. Entries use only the caption, transcript and on-screen text. If a video has little content, the entry says so.
+4. Categories are proposed by AI, approved by the user. Accuracy matters more than speed; the user can rename, merge or reject before the tree is locked.
+5. Overlap is flagged, not merged. The app may note that a video is similar to others, so the user can skip rewatching, but all videos stay.
+6. Always traceable. Each entry links to the original post, with the transcript one click away so the user can check the AI.
+7. Local first. Videos, images and transcripts stay on the user's Mac.
+User flow
+The user moves from a raw list of saves to an approved category tree, then browses, searches and downloads.
+1. Import the backlog. The user loads TikTok's data export (the list of favorited posts) to get every post URL.
+2. Capture details. A Chrome extension, running in the user's own logged-in session, reads the Favorites page and collections and sends each post's caption, hashtags, creator, date, type and link to the local app.
+3. Extract text. For each post the app transcribes speech, reads carousel slides with OCR, and reads on-screen text from sampled video frames.
+4. Write entries. The AI writes one entry per post: key points, action steps and verbatim specifics.
+5. Review the category proposal. The AI proposes categories and subcategories from all entries. The user renames, merges or rejects them, then confirms.
+6. Place videos. Each video is assigned to one primary subcategory and any extra ones; overlap with other videos is flagged.
+7. Browse and search. The user opens a category, reads entries, and searches by key idea.
+8. Pick and download. The user ticks videos, helped by AI suggestions, and the app downloads them.
+9. Refresh. One click imports only posts not seen before and runs them through steps 3 to 6.
+Functional requirements
+Requirements are grouped by feature area; each line is something the app must do.
+Area
+Requirement
+Ingestion
+Import TikTok's data export to get the list of favorited post URLs.
+Ingestion
+Chrome extension (Manifest V3) reads Favorites and collections in the user's logged-in session and sends post data to the local app.
+Ingestion
+Capture per post: URL, post ID, caption, hashtags, creator, posted date, type (video or carousel), thumbnail.
+Ingestion
+One-click refresh imports only posts not already in the library.
+Ingestion
+Dead, private or failed posts are logged, shown in the UI and retryable.
+Extraction
+Transcribe speech in videos locally.
+Extraction
+Run OCR on each carousel slide, keeping slide order.
+Extraction
+Run OCR on sampled video frames to catch on-screen text.
+Extraction
+Track a status per post (captured, extracted, written, categorised, failed) so processing can stop and resume.
+Entries
+One entry per video with 3 to 7 key points, action steps (only if the video gives any) and verbatim specifics.
+Entries
+Each entry links to the original post and shows the full transcript or slide text on request.
+Entries
+Each entry carries an AI download suggestion with a one-line reason.
+Categories
+AI proposes a category and subcategory tree from all entries.
+Categories
+User can rename, merge or reject proposed categories before the tree is locked.
+Categories
+Each video has one primary subcategory and any number of extra subcategories.
+Categories
+Overlap between videos is flagged (for example, similar to 3 other videos) without merging them.
+Library
+Category tree on the left, entries for the selected subcategory on the right.
+Library
+Search box that finds videos by key idea, not just exact words.
+Library
+Filters by creator, save date and content type.
+Corrections
+Move a video to another category.
+Corrections
+Re-run the AI on a single video.
+Corrections
+Rename or merge categories after the tree is built.
+Download
+Tick boxes to select videos; AI-suggested videos are highlighted.
+Download
+Download selected videos (and carousel images) to a folder on the Mac.
+AI output and data model
+The AI writes each entry from that post's own text only, in two separate steps: first the entry, then the category placement.
+Entry fields (one per video)
+• Title: one line describing the video.
+• Key points: 3 to 7 bullets that keep the video's essence.
+• Action steps: concrete things to do, only if the video states them.
+• Specifics: names, numbers, tools, books and frameworks copied exactly as said.
+• Topics: free-text topics, used later to build the category tree.
+• Download suggestion: yes or no, with a one-line reason.
+Rules for the AI
+• Use only the caption, transcript and on-screen text. Add no outside knowledge.
+• Never merge or compare videos when writing an entry. Overlap is detected afterwards, as a separate step.
+• When the text is thin or unclear, say so in the entry instead of filling gaps.
+Data model
+Entity
+Key fields
+Post
+URL, TikTok ID, creator, caption, hashtags, posted date, type, status, transcript or slide text, file path (if downloaded)
+Entry
+Post, title, key points, action steps, specifics, topics, download suggestion and reason
+Category
+Name, parent (a subcategory has a parent category), approved or proposed
+Placement
+Post, category, primary or extra
+Overlap
+Post, similar post, short note on what overlaps
+Architecture and tech stack
+The app runs on the owner's Mac; the only data that leaves it is post text sent to the Claude API.
+The Chrome extension and the data export feed the local Python app, which calls three workers (fetch media, speech to text, OCR), stores everything in its database, and serves the local web app. Choices marked "to decide" are open questions below.
+Layer
+Choice
+Capture
+Chrome extension in JavaScript, Manifest V3
+Local app
+Python; framework to decide (Django or FastAPI)
+Database
+SQLite to start
+Fetch media
+yt-dlp and ffmpeg
+Speech to text
+faster-whisper, run locally
+OCR
+Apple Vision or Tesseract
+AI
+Claude API for entries, category proposals and overlap flags
+Search
+Keyword search plus embeddings for key ideas; embedding model to decide
+Interface
+Local web app in the browser
+Non-functional requirements and risks
+The biggest risk is the capture step, because TikTok has no official way to read saved posts.
+Non-functional requirements
+• Privacy: videos, images and transcripts stay on the user's Mac; only text is sent to the AI service.
+• Resumable: processing 500+ posts runs in the background, survives restarts and never redoes finished work.
+• Cost: AI cost is expected to be small per post (a few dollars for 500 posts is the working estimate, to be checked on a 20-post test).
+• Accuracy over speed: spot-checks against original videos matter more than processing time.
+Risks
+Risk
+Mitigation
+Capturing and downloading may breach TikTok's terms
+Keep it for personal use, user-triggered and rate-limited; store text and links, do not redistribute videos; review terms again before others use it.
+TikTok changes its page and the extension stops reading it
+Keep the data export as a fallback; isolate page-reading code so fixes are small.
+Speech transcription mistakes on jargon or accents
+Keep the transcript and original link on every entry for checking.
+Videos with no speech or text give thin entries
+Mark them as thin instead of inventing content.
+AI places a video in the wrong category
+User approves the tree first and can move videos or re-run the AI.
+Dead, private or region-locked posts
+Log them, show them in the UI and allow retry.
+Success metrics
+The product works if the owner trusts its summaries, agrees with its categories and finds ideas quickly. The success areas come from the owner; the numeric targets are proposals to confirm.
+Area
+How it is measured
+Proposed target
+Faithful summaries
+Spot-check 20 random entries against the original videos
+No important point missing and nothing invented in any of the 20
+Categories feel right
+Share of videos the owner moves or re-categorises after approval
+Under 10%
+Fast to find
+Time to find a specific saved tip using search or the category tree
+Under 30 seconds
+Search by key idea
+Searching an idea surfaces the right videos
+The expected videos appear in the top results in a 10-query test
+Phasing and milestones
+The order below is a proposal, built so the riskiest question, whether the AI entries are good, is answered first. The owner has said the goal is a polished product with no fixed deadline, so no dates are set.
+1. Prove the entries. Run 20 posts (videos, carousels, a few with no speech) through extraction and the AI. Done when the spot-check shows faithful entries.
+2. Process the full backlog. Use the data export to run all 500+ posts, resumable, with failures logged. Done when every post has a status and a result or a logged failure.
+3. Categories and library. Build the category proposal and approval step, the library view, overlap flags and search. Done when the owner has approved a tree and can find tips quickly.
+4. Corrections and download. Add move, re-run and rename or merge; add tick-box download with AI suggestions. Done when chosen videos land in a local folder.
+5. Extension and refresh. Build the Chrome extension and one-click refresh for new saves. Done when new saves flow in without a new export.
+6. Polish and others. Improve design, speed and setup so other people can use it. Done when a second person can run it from scratch.
+Assumptions and open questions
+These points were not decided by the owner and need confirming before build.
+Assumptions made in this draft
+• "All content types" means videos with speech, carousels and on-screen-text videos in version 1, with other platforms later.
+• Each entry keeps its link and a transcript on request, because the download step needs the link and checking needs the transcript.
+• The AI download suggestion uses how actionable and substantive a video looks. It is only a suggestion; the user decides.
+• Success targets (under 10% re-categorised, under 30 seconds to find) are proposals.
+• Only the three corrections the owner picked (move, re-run, rename or merge) are in version 1; hand-editing bullets is not.
+ask me any qns before building, suggest a name for this

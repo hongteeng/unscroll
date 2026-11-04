@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Unscroll — bring your saves home",
+  "version": "0.2.0",
+  "description": "Capture TikTok saves and browse your personal library in Chrome, with a local Mac processing helper.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "content_security_policy": {"extension_pages": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src http://127.0.0.1:8765; object-src 'none'; base-uri 'none'"},
+  "action": {"default_popup": "popup.html", "default_title": "Unscroll — capture or open library"}
+}
