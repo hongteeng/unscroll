@@ -35,14 +35,18 @@ Stop the earlier Sift helper/Terminal before starting Unscroll; both use local p
 
 Use **Processing → Queue remaining backlog** after the 20-post quality check. Pause stops after the current job; it preserves queued jobs. Dead, private, blocked or unsupported posts remain visible with retry controls.
 
+### Remove an accidental import
+
+Open **Processing → Pause** and wait for the active post to finish. In **Settings → Clear accidental imports**, choose **Remove all unprocessed posts** and confirm the count. This applies to the whole library, even with filters active. To remove only a selection, tick those posts and choose **Remove unprocessed selected**. Completed entries and permanent downloads are protected. Queued jobs for removed posts are cancelled; TikTok saves are unchanged. Partial extraction and attachments are retained in a local recovery copy. **Settings → Undo last removal** restores that batch while keeping the queue paused. Undo refuses to overwrite posts that have been imported again. After clearing an accidental backlog, import a few individual links and use **Process selected** or **Process next 20**.
+
 ## Capture new saves with Chrome
 
 1. Open `chrome://extensions`, enable Developer mode, and choose **Load unpacked**. Select this project's `extension` folder.
 2. Start the local helper, then paste the setup token into the extension (or retrieve it through Settings at http://127.0.0.1:8765).
-3. In your own logged-in TikTok tab, open Favorites or a collection. Click **Capture loaded saves**, or **Scroll & refresh saves**. Keep the popup open while it scans.
+3. In your own logged-in TikTok tab, open Favorites or a collection. Use **Check for new saves** for a quick scan from the top; it stops after a stretch of posts already in your library. Use **Continue importing older saves** for your backlog; it remembers the last successfully imported post separately for each page and collection name. **More options → Rescan everything** starts over and refreshes existing metadata. Keep the popup open while importing, or choose **Stop importing** to stop after the current batch.
 4. Click **Open your library** in the extension and process the new posts. Existing IDs are deduplicated automatically.
 
-The extension acts only when clicked. It reads loaded links and available first-party page metadata; it does not obtain cookies or change anything on TikTok. Collections can be labelled with the extension's optional collection field. Automatic discovery of every collection and every saved post is **not guaranteed**. Use the data export as the backlog index. The extension and TikTok's current page structure still need a live account test.
+The extension acts only when clicked. It reads loaded links and available first-party page metadata; it does not obtain cookies or change anything on TikTok. Collections can be labelled with the extension's optional collection field. Use the same label when continuing an import. A quick check preserves your older-import bookmark and submits only posts missing from the helper's library. It assumes new saves appear near the top, so use a full rescan to recover gaps or refresh collection labels on existing posts. If TikTok has unloaded the bookmarked post, continuing may need to scroll through earlier posts to find it again; a missing bookmark produces an explicit recovery message. Imports save progress after each batch, stop after six scans without additional links, and pause after 200 batches; continue again if needed. Closing the popup interrupts the current scan, so its last unconfirmed batch may be retried. Automatic discovery of every collection and every saved post is **not guaranteed**. Use the data export as the backlog index. The extension and TikTok's current page structure still need a live account test.
 
 ## When a post cannot be fetched
 

@@ -108,6 +108,16 @@ document.addEventListener('click',event=>action(async()=>{
   }
   if(b.id==='select-visible'){state.posts.forEach(p=>state.selected.add(p.id));renderCards();return;}
   if(b.id==='clear-selection'){state.selected.clear();renderCards();return;}
+  if(b.id==='remove-unprocessed'||b.id==='remove-selected'){
+    const preview=await api('imports/remove-preview',b.id==='remove-unprocessed'?{all_unprocessed:true}:{ids:[...state.selected]});
+    if(!preview.count)return toast('No eligible unprocessed posts. Completed entries and permanent downloads are protected.');
+    if(!confirm(`Remove ${preview.count} unprocessed posts from Unscroll and cancel their queued jobs? ${b.id==='remove-unprocessed'?'This covers your whole library, regardless of filters. ':''}Your TikTok saves, completed entries and permanent downloads stay intact. You can undo removal in Settings.`))return;
+    const r=await api('imports/remove',{ids:preview.ids});
+    preview.ids.forEach(id=>state.selected.delete(id));
+    if(state.active&&preview.ids.includes(state.active.id)){$('#detail-dialog').close();state.active=null;}
+    toast(r.message);return refresh();
+  }
+  if(b.id==='undo-removal'){toast((await api('imports/undo',{})).message);return refresh();}
   if(b.id==='download-selected'){const r=await api('download',{ids:[...state.selected]});toast(`${r.queued} selected downloads queued.`);return refresh();}
   if(b.id==='pause'||b.id==='resume'){toast((await api(b.id,{})).message);return refresh();}
   if(b.id==='suggest-cats'){

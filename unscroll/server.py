@@ -96,6 +96,76 @@ class MoveRequest(BaseModel):
     extra_ids:list[int]=Field(default_factory=list,max_length=30)
 
 
+class RemoveImportsRequest(BaseModel):
+    ids:list[str]=Field(default_factory=list,max_length=20000)
+    all_unprocessed:bool=False
+
+
+def removable_imports(c, body):
+    rows=c.execute("SELECT id FROM posts WHERE entry IS NULL AND download_path=''").fetchall()
+    selected=set(body.ids)
+    return [r['id'] for r in rows if body.all_unprocessed or r['id'] in selected]
+
+
+def require_paused(c):
+    # Serialize with the worker's BEGIN IMMEDIATE before checking queue state.
+    paused=c.execute("SELECT value FROM settings WHERE key='paused'").fetchone()
+    if not paused or not json.loads(paused[0]) or c.execute("SELECT 1 FROM jobs WHERE state='running'").fetchone():
+        raise HTTPException(409,'Pause processing and wait for the current post to finish, then try again.')
+
+
+@app.post('/api/imports/remove-preview')
+def remove_preview(body:RemoveImportsRequest):
+    with db.connect() as c:
+        ids=removable_imports(c,body)
+    return {'ids':ids,'count':len(ids)}
+
+
+@app.post('/api/imports/remove')
+def remove_imports(body:RemoveImportsRequest):
+    if body.all_unprocessed or not body.ids:
+        raise ValueError('Preview and confirm an explicit selection before removing imports.')
+    with db.connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        require_paused(c)
+        ids=removable_imports(c,body)
+        if set(ids)!=set(body.ids):
+            raise HTTPException(409,'Some posts changed or have completed entries or downloads. Review your selection again.')
+        # Save complete records for Undo; leave attached and downloaded files untouched.
+        archive={table:[] for table in ('posts','jobs','vectors','placements')}
+        for ident in ids:
+            for table in archive:
+                column='id' if table=='posts' else 'post_id'
+                archive[table].extend(dict(r) for r in c.execute(f'SELECT * FROM {table} WHERE {column}=?',(ident,)))
+        batch=secrets.token_hex(16)
+        c.execute('INSERT INTO removed_imports VALUES(?,?,?)',(batch,json.dumps(archive),time.time()))
+        c.executemany('DELETE FROM jobs WHERE post_id=?',[(ident,) for ident in ids])
+        c.executemany('DELETE FROM posts WHERE id=?',[(ident,) for ident in ids])
+    return {'removed':len(ids),'message':f'Removed {len(ids)} unprocessed posts. You can undo this in Settings.'}
+
+
+@app.post('/api/imports/undo')
+def undo_remove_imports():
+    with db.connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        require_paused(c)
+        row=c.execute('SELECT * FROM removed_imports ORDER BY created DESC LIMIT 1').fetchone()
+        if not row: raise ValueError('There is no removal to undo.')
+        archive=json.loads(row['payload'])
+        if any(c.execute('SELECT 1 FROM posts WHERE id=?',(p['id'],)).fetchone() for p in archive['posts']):
+            raise HTTPException(409,'Some removed posts were imported again. Undo cannot replace them.')
+        for table in ('posts','jobs','vectors','placements'):
+            for record in archive[table]:
+                if table=='jobs':
+                    record.pop('id',None)  # IDs may have been reused since removal.
+                if table=='placements' and not c.execute('SELECT 1 FROM categories WHERE id=?',(record['category_id'],)).fetchone():
+                    continue
+                columns=list(record)
+                c.execute(f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",list(record.values()))
+        c.execute('DELETE FROM removed_imports WHERE id=?',(row['id'],))
+    return {'message':f"Restored {len(archive['posts'])} posts. Processing remains paused."}
+
+
 @app.get('/api/session')
 def session():
     return {'token':db.setting('token'),'api_ready':bool(os.environ.get('ANTHROPIC_API_KEY')),

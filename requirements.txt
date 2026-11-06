@@ -5,6 +5,8 @@ python-multipart>=0.0.18,<1
 python-dotenv>=1,<2
 yt-dlp>=2025.1
 faster-whisper>=1.1,<2
+# faster-whisper 1.2.x passes metadata_errors to av.open; newer PyAV removed it.
+av>=11,<17
 pytesseract>=0.3.13,<1
 Pillow>=10,<13
 fastembed>=0.6,<1

@@ -6,7 +6,7 @@ const assert=require('node:assert/strict');
 const source=fs.readFileSync(path.join(__dirname,'../extension/app.js'),'utf8');
 const tick=()=>new Promise(r=>setImmediate(r));
 async function run(token,offline=false){
-  const nodes=new Map(),calls=[],stored={unscrollToken:token};
+  const nodes=new Map(),calls=[],stored={unscrollToken:token},handlers={};
   const node=id=>{
     if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,open:false,
       events:{},addEventListener(type,fn){this.events[type]=fn;},
@@ -15,17 +15,24 @@ async function run(token,offline=false){
   };
   const data={counts:{total:0,ready:0,reviewed:0},tree:[],jobs:[],job_counts:{},creators:[],usage:{},paused:true};
   const context={console,URLSearchParams,FormData,URL,structuredClone,
-    location:{protocol:'chrome-extension:'},document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){},hidden:false},
+    confirm:()=>false,
+    location:{protocol:'chrome-extension:'},document:{querySelector:node,querySelectorAll:()=>[],addEventListener(type,fn){handlers[type]=fn;},hidden:false},
     chrome:{storage:{local:{get:async()=>stored,set:async values=>Object.assign(stored,values)}}},
     setInterval:()=>1,clearInterval(){},setTimeout:()=>1,clearTimeout(){},
     fetch:async(url,opts)=>{
       calls.push({url,opts});if(offline)throw new Error('offline');
-      const result=url.includes('/session')?{token:'valid-token',api_ready:true,tools:{},model:'test-model'}:
+      const result=url.endsWith('/imports/remove-preview')?{ids:['123','456'],count:2}:
+        url.endsWith('/imports/remove')?{removed:2,message:'Removed two posts.'}:
+        url.endsWith('/imports/undo')?{message:'Restored two posts.'}:
+        url.includes('/session')?{token:'valid-token',api_ready:true,tools:{},model:'test-model'}:
         url.includes('/state')?data:{posts:[],warning:''};
       return {ok:true,json:async()=>result};
     }};
   vm.runInNewContext(source,context);await tick();await tick();
-  return {node,calls,stored,context};
+  return {node,calls,stored,context,click:async id=>{
+    const button={id,dataset:{},hasAttribute:()=>false};
+    await handlers.click({target:{closest:()=>button}});
+  }};
 }
 (async()=>{
   let app=await run('');
@@ -41,5 +48,14 @@ async function run(token,offline=false){
   assert.match(app.node('#connection-error').textContent,/helper is not running/);
   app=await run('valid-token');
   assert.equal(app.node('#connect-dialog').open,false);assert(app.calls.length>=3);
+  await app.click('remove-unprocessed');
+  assert(app.calls.some(c=>c.url.endsWith('/imports/remove-preview')));
+  assert(!app.calls.some(c=>c.url.endsWith('/imports/remove')));
+  app.context.confirm=()=>true;
+  await app.click('remove-unprocessed');
+  const removal=app.calls.find(c=>c.url.endsWith('/imports/remove'));
+  assert.deepEqual(JSON.parse(removal.opts.body),{ids:['123','456']});
+  await app.click('undo-removal');
+  assert(app.calls.some(c=>c.url.endsWith('/imports/undo')));
   console.log('Extension boot checks passed: unpaired, pairing, paired API routing and helper unavailable.');
 })().catch(e=>{console.error(e);process.exit(1);});

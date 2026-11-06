@@ -174,5 +174,55 @@ class Case(unittest.TestCase):
         self.add();r=self.client.get('/api/export',headers=self.headers)
         self.assertEqual(r.status_code,200);self.assertNotIn(self.token,r.text)
 
+    def test_removal_preview_protects_completed_entries_and_downloads(self):
+        a=self.add();b=self.add(URL.replace('100001','100002'));c=self.add(URL.replace('100001','100003'))
+        self.entry(b);db.update(c,download_path='/kept/video.mp4')
+        preview=self.post('imports/remove-preview',{'all_unprocessed':True}).json()
+        self.assertEqual(preview['ids'],[a]);self.assertEqual(preview['count'],1)
+        self.assertEqual(self.post('imports/remove',{'ids':[a,b]}).status_code,409)
+        self.assertIsNotNone(db.post(a));self.assertIsNotNone(db.post(b))
+        self.assertEqual(self.post('imports/remove',{'all_unprocessed':True}).status_code,400)
+        self.assertEqual(self.post('imports/remove',{'ids':[]}).status_code,400)
+
+    def test_removal_and_undo_preserve_partial_work_and_cancel_jobs(self):
+        ident=self.add();db.update(ident,source=SOURCE,status='failed',error='Previous failure')
+        db.enqueue('process',ident);db.enqueue('download',ident)
+        self.assertEqual(self.post('imports/remove',{'ids':[ident]}).json()['removed'],1)
+        self.assertIsNone(db.post(ident))
+        with db.connect() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM jobs').fetchone()[0],0)
+        self.assertEqual(self.post('imports/undo').status_code,200)
+        self.assertEqual(db.post(ident)['source'],SOURCE)
+        self.assertEqual(db.post(ident)['error'],'Previous failure')
+        self.assertTrue(db.setting('paused'))
+        with db.connect() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM jobs').fetchone()[0],2)
+
+    def test_removal_requires_paused_queue_and_no_running_job(self):
+        ident=self.add();db.enqueue('process',ident);db.put_setting('paused',False)
+        self.assertEqual(self.post('imports/remove',{'ids':[ident]}).status_code,409)
+        db.put_setting('paused',True)
+        with db.connect() as c:c.execute("UPDATE jobs SET state='running'")
+        self.assertEqual(self.post('imports/remove',{'ids':[ident]}).status_code,409)
+        self.assertIsNotNone(db.post(ident))
+
+    def test_removal_requires_authentication(self):
+        ident=self.add()
+        for path in ('remove-preview','remove','undo'):
+            self.assertEqual(self.client.post('/api/imports/'+path,json={'ids':[ident]}).status_code,401)
+        self.assertIsNotNone(db.post(ident))
+
+    def test_undo_does_not_overwrite_reimported_posts(self):
+        ident=self.add();self.post('imports/remove',{'ids':[ident]});self.add();self.entry(ident)
+        self.assertEqual(self.post('imports/undo').status_code,409)
+        self.assertEqual(db.post(ident)['entry'],ENTRY)
+
+    def test_bulk_removal_only_removes_confirmed_ids(self):
+        records=[{'url':URL.replace('100001',str(n))} for n in range(100001,100802)]
+        ingest.add(records)
+        ids=self.post('imports/remove-preview',{'all_unprocessed':True}).json()['ids']
+        self.assertEqual(len(ids),801)
+        extra=self.add(URL.replace('100001','900000'))
+        self.assertEqual(self.post('imports/remove',{'ids':ids}).json()['removed'],801)
+        self.assertIsNotNone(db.post(extra))
+
 
 if __name__=='__main__':unittest.main()

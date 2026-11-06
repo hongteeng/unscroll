@@ -62,6 +62,7 @@ def init():
           content_hash TEXT NOT NULL, embedding TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS usage(id INTEGER PRIMARY KEY, purpose TEXT, input_tokens INTEGER,
           output_tokens INTEGER, created REAL);
+        CREATE TABLE IF NOT EXISTS removed_imports(id TEXT PRIMARY KEY, payload TEXT NOT NULL, created REAL NOT NULL);
         ''')
         c.execute("INSERT OR IGNORE INTO settings VALUES('token',?)", (json.dumps(secrets.token_urlsafe(32)),))
         c.execute("INSERT OR IGNORE INTO settings VALUES('paused','true')")
