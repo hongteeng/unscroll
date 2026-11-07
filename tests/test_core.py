@@ -122,6 +122,19 @@ class Core(unittest.TestCase):
             extract.assert_not_called();self.assertEqual(db.post(ident)['source'],SOURCE)
         self.run_job('process',run)
 
+    def test_connection_timeout_identifies_stage_without_leaking_details(self):
+        import httpx
+        def run(w,ident):
+            def fail(*args):
+                w.stop.set()
+                raise httpx.ConnectTimeout('https://private-url/?credential=secret')
+            with patch('unscroll.media.extract',side_effect=fail):w.run()
+            message=db.post(ident)['error']
+            self.assertIn('timed out while extracting media',message)
+            self.assertNotIn('private-url',message)
+            self.assertNotIn('credential',message)
+        self.run_job('process',run)
+
     def test_search_failure_does_not_lose_entry(self):
         def run(w,ident):
             db.update(ident,source=SOURCE,status='extracted')

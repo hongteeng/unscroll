@@ -27,15 +27,18 @@ class Worker:
             if not row:
                 self.stop.wait(.5); continue
             job=dict(row)
+            stage={'place':'placing an entry','download':'downloading media','propose':'proposing categories','index':'building local search'}.get(job['kind'],'loading the post')
             try:
                 p=db.post(job['post_id']) if job['post_id'] else None
                 if job['kind']=='process':
                     if not p['source']:
+                        stage='extracting media (TikTok fetch, speech recognition or OCR)'
                         folder=db.home()/'tmp'/p['id']
                         try: media.extract(p,folder)
                         finally: media.cleanup(p,folder)
                         p=db.post(p['id'])
                     if not p['entry']:
+                        stage='writing the entry with Claude'
                         entry=ai.write(p['source'])
                         db.update(p['id'],entry=entry,status='written',error='',reviewed=0)
                         p=db.post(p['id'])
@@ -59,7 +62,13 @@ class Worker:
                 if p and job['kind'] in ('process','place'): db.update(p['id'],error='')
             except Exception as e:
                 # Do not store response bodies or arbitrary third-party errors (may include signed media URLs).
-                message=str(e) if isinstance(e,ValueError) else f'{type(e).__name__}: processing failed. Check local dependencies or try again.'
+                import httpx
+                if isinstance(e,httpx.TimeoutException):
+                    message=f'Connection timed out while {stage}. Check your connection and retry. Media extraction may need access to TikTok or speech-model downloads.'
+                elif isinstance(e,httpx.RequestError):
+                    message=f'Network connection failed while {stage}. Check your connection and retry.'
+                else:
+                    message=str(e) if isinstance(e,ValueError) else f'{type(e).__name__} while {stage}. Retry this post or check the local dependencies.'
                 with db.connect() as c: c.execute("UPDATE jobs SET state='failed',error=? WHERE id=?",(message,job['id']))
                 if job['post_id']:
                     if job['kind']=='download': db.update(job['post_id'],download_error=message)

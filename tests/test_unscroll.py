@@ -224,5 +224,16 @@ class Case(unittest.TestCase):
         self.assertEqual(self.post('imports/remove',{'ids':ids}).json()['removed'],801)
         self.assertIsNotNone(db.post(extra))
 
+    def test_collection_link_import_does_not_start_media_processing(self):
+        records=[{'url':URL.replace('100001',str(n)),'collections':['Test collection']} for n in range(100001,100021)]
+        result=self.post('capture',{'posts':records})
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(result.json()['added'],20)
+        with db.connect() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM posts').fetchone()[0],20)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM jobs').fetchone()[0],0)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM posts WHERE source IS NOT NULL OR entry IS NOT NULL OR download_path!=''").fetchone()[0],0)
+        self.assertTrue(db.setting('paused'))
+
 
 if __name__=='__main__':unittest.main()

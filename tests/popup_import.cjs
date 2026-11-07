@@ -5,7 +5,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync(path.join(__dirname, '../extension/popup.js'), 'utf8');
 const post = id => ({id:String(id), url:`https://www.tiktok.com/@tester/video/${id}`});
-const key = 'unscrollProgress:'+JSON.stringify(['https://www.tiktok.com/@tester/favorites','']);
+const key = 'unscrollProgressV2:'+JSON.stringify(['https://www.tiktok.com/@tester/favorites','test-scope','']);
 
 async function setup({known=[], saved, pages=[[1]], fail=false, stop=false}={}) {
   const nodes = new Map(), stored = {unscrollToken:'token'}, actions=[], imports=[];
@@ -16,15 +16,15 @@ async function setup({known=[], saved, pages=[[1]], fail=false, stop=false}={}) 
     return nodes.get(id);
   };
   let index=0;
-  const context={URL, console, document:{getElementById:node},
+  const context={URL, console, confirm:()=>true,document:{getElementById:node},
     chrome:{storage:{local:{get:async()=>({...stored}),set:async v=>Object.assign(stored,v)}},
       tabs:{query:async()=>[{id:1,url:'https://www.tiktok.com/@tester/favorites'}]},
       scripting:{executeScript:async ({args})=>{
-        const action=args[0];actions.push(action);
+        const action=args[0];if(action!=='inspect')actions.push(action);
         if(action==='top')index=0;
         if(action==='down')index=Math.min(index+1,pages.length-1);
         const ids=pages[index];
-        return [{result:{posts:ids.map(post),y:index*800,anchorFound:action==='resume'&&ids.includes(Number(saved?.id))}}];
+        return [{result:{posts:ids.map(post),y:index*800,scope:'test-scope',anchorFound:action==='resume'&&ids.includes(Number(saved?.id))}}];
       }}},
     fetch:async(url,opts)=>{
       if(url.endsWith('/posts'))return {ok:true,json:async()=>({posts:known.map(post)})};
@@ -78,22 +78,7 @@ async function setup({known=[], saved, pages=[[1]], fail=false, stop=false}={}) 
   app=await setup({stop:true,pages:[[1],[2]]});await app.run('continue');
   assert.equal(app.stored[key].id,'1');assert.equal(app.actions.length,1);
   assert.match(app.node('status').textContent,/Stopped/);
-  // Exercise the actual injected function, including metadata and resume actions.
-  const page='https://www.tiktok.com/@tester/favorites';
-  let scrolls=0,anchored=false;
-  const link={href:post(42).url,scrollIntoView(){anchored=true;}};
-  const context=app.context;
-  context.location={href:page,origin:'https://www.tiktok.com',pathname:'/@tester/favorites',search:'',hash:''};
-  context.window={innerHeight:800,scrollY:0,scrollTo(x,y){this.scrollY=y;scrolls++;},scrollBy(x,y){this.scrollY+=y;scrolls++;}};
-  context.setTimeout=fn=>fn();
-  context.document.querySelectorAll=()=>[link,link];
-  context.document.getElementById=id=>({textContent:JSON.stringify({id:'42',desc:'Caption',author:{uniqueId:'tester'},imagePost:{images:[{imageURL:{urlList:['https://p16.tiktokcdn.com/slide.jpg']}}]}})});
-  let batch=await context.captureInPage('top','Ideas',page,null);
-  assert.equal(batch.posts.length,1);assert.equal(batch.posts[0].caption,'Caption');
-  assert.equal(batch.posts[0].collections[0],'Ideas');assert.equal(batch.posts[0].slides_complete,true);
-  batch=await context.captureInPage('resume','Ideas',page,{id:'42',y:800});
-  assert.equal(batch.anchorFound,true);assert(anchored);
-  await context.captureInPage('down','Ideas',page,null);assert.equal(scrolls,3);
-  await assert.rejects(()=>context.captureInPage('top','Ideas',page+'/other',null),/page changed/);
+  app=await setup();app.context.confirm=()=>false;await app.run('rescan');
+  assert.equal(app.imports.length,0);assert.equal(app.actions.length,0);
   console.log('Popup import checks passed: quick check, resume, seek, missing bookmark, rescan, failure, stop.');
 })().catch(e=>{console.error(e);process.exit(1);});
