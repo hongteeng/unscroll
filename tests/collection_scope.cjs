@@ -19,7 +19,11 @@ const fixture=`${controls}<h1>My 20 saved videos</h1>
     await page.goto('https://www.tiktok.com/@test/favorites');
     await page.evaluate(()=>{window.chrome={storage:{local:{get:async()=>({})}}};});
     await page.evaluate(source);
-    const inspect=()=>page.evaluate(()=>captureInPage('inspect','Test',location.href,null));
+    const inspect=async()=>{
+      const result=await page.evaluate(()=>captureInPage('inspect','Test',location.href,null));
+      if(result.error)throw new Error(result.error);
+      return result;
+    };
     await assert.rejects(inspect,/Choose the collection/);
     await page.evaluate(()=>chooseCollectionInPage());
     await page.locator('#collection-grid a').first().click();
@@ -31,6 +35,11 @@ const fixture=`${controls}<h1>My 20 saved videos</h1>
     assert.deepEqual(batch.posts.map(p=>p.url.match(/\d+$/)[0]),Array.from({length:20},(_,i)=>String(100+i)));
     assert.equal(batch.posts[0].caption,'Selected caption');
     assert(batch.posts.every(p=>p.collections[0]==='Test'));
+    await page.locator('#collection-grid').evaluate(e=>e.style.display='contents');
+    await page.locator('#collection-grid > [data-e2e="user-post-item"]').evaluateAll(nodes=>nodes.forEach(e=>e.style.display='contents'));
+    assert.equal((await inspect()).posts.length,20);
+    await page.locator('#collection-grid').evaluate(e=>e.style.display='block');
+    await page.locator('#collection-grid > [data-e2e="user-post-item"]').evaluateAll(nodes=>nodes.forEach(e=>e.style.display='block'));
     const originalScope=batch.scope;
     await page.evaluate(()=>captureInPage('down','Test',location.href,null));
     assert((await page.locator('#scroll-box').evaluate(e=>e.scrollTop))>0);

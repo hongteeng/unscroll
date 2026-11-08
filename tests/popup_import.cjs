@@ -7,7 +7,7 @@ const source = fs.readFileSync(path.join(__dirname, '../extension/popup.js'), 'u
 const post = id => ({id:String(id), url:`https://www.tiktok.com/@tester/video/${id}`});
 const key = 'unscrollProgressV2:'+JSON.stringify(['https://www.tiktok.com/@tester/favorites','test-scope','']);
 
-async function setup({known=[], saved, pages=[[1]], fail=false, stop=false}={}) {
+async function setup({known=[], saved, pages=[[1]], fail=false, stop=false,scanError=''}={}) {
   const nodes = new Map(), stored = {unscrollToken:'token'}, actions=[], imports=[];
   if(saved) stored[key]=saved;
   const node=id=>{
@@ -21,6 +21,7 @@ async function setup({known=[], saved, pages=[[1]], fail=false, stop=false}={}) 
       tabs:{query:async()=>[{id:1,url:'https://www.tiktok.com/@tester/favorites'}]},
       scripting:{executeScript:async ({args})=>{
         const action=args[0];if(action!=='inspect')actions.push(action);
+        if(scanError)return [{result:{error:scanError}}];
         if(action==='top')index=0;
         if(action==='down')index=Math.min(index+1,pages.length-1);
         const ids=pages[index];
@@ -80,5 +81,12 @@ async function setup({known=[], saved, pages=[[1]], fail=false, stop=false}={}) 
   assert.match(app.node('status').textContent,/Stopped/);
   app=await setup();app.context.confirm=()=>false;await app.run('rescan');
   assert.equal(app.imports.length,0);assert.equal(app.actions.length,0);
+  app=await setup({scanError:'Choose the collection on the TikTok page first. No posts imported.'});
+  await app.run('check');
+  assert.equal(app.imports.length,0);
+  assert.match(app.node('status').textContent,/^Choose the collection/);
+  assert.doesNotMatch(app.node('status').textContent,/0 posts found/);
+  app=await setup({known:[],pages:[[1],[2]]});await app.run('check');
+  assert.deepEqual(app.imports.flat().map(p=>p.id),['1','2']);
   console.log('Popup import checks passed: quick check, resume, seek, missing bookmark, rescan, failure, stop.');
 })().catch(e=>{console.error(e);process.exit(1);});

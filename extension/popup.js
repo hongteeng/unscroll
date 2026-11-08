@@ -34,7 +34,7 @@ function chooseCollectionInPage(){
         const style=getComputedStyle(p);
         if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;
       }
-      return node.getClientRects().length>0;
+      return node.getClientRects().length>0||(getComputedStyle(node).display==='contents'&&[...node.querySelectorAll('*')].some(child=>child.getClientRects().length>0&&getComputedStyle(child).visibility==='visible'));
     };
     const headings=[...document.querySelectorAll('h1,h2,[role="tab"][aria-selected="true"]')].filter(n=>!root.contains(n)&&shown(n)).map(n=>n.textContent.trim());
     const markers=[];
@@ -50,6 +50,8 @@ function chooseCollectionInPage(){
   globalThis.__unscrollPickerCleanup=cleanup;
 }
 async function captureInPage(action,collection,page,checkpoint){
+  // Return failures explicitly: Chrome may drop rejected injection results.
+  try{
   if(location.origin+location.pathname+location.search+location.hash!==page)throw new Error('The TikTok page changed. Open the popup again on the collection you want.');
   const scope=globalThis.__unscrollScope;
   if(!scope||!scope.root.isConnected||scope.page!==location.href)throw new Error('Choose the collection on the TikTok page first. No posts imported.');
@@ -60,7 +62,7 @@ async function captureInPage(action,collection,page,checkpoint){
       const style=getComputedStyle(p);
       if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;
     }
-    return node.getClientRects().length>0;
+    return node.getClientRects().length>0||(getComputedStyle(node).display==='contents'&&[...node.querySelectorAll('*')].some(child=>child.getClientRects().length>0&&getComputedStyle(child).visibility==='visible'));
   };
   const identity=()=>{
     const headings=[...document.querySelectorAll('h1,h2,[role="tab"][aria-selected="true"]')].filter(n=>!root.contains(n)&&visible(n)).map(n=>n.textContent.trim());
@@ -119,6 +121,7 @@ async function captureInPage(action,collection,page,checkpoint){
   scan();
   const rows=[...posts.values()];
   return {posts:rows,y:scroller.scrollTop,anchorFound,scope:scope.id};
+  }catch(error){return {error:error.message||'Could not read the chosen collection. Choose it again on the TikTok page.'};}
 }
 let stopped=false;
 const buttons=['check','continue','rescan'];
@@ -140,7 +143,9 @@ async function run(mode){
     const collection=el('collection').value.trim();
     const page=u.origin+u.pathname+u.search+u.hash;
     const inspection=(await chrome.scripting.executeScript({target:{tabId:tab.id},func:captureInPage,args:['inspect',collection,page,null]}))[0]?.result;
-    if(!inspection?.posts?.length)throw new Error('No videos found in the selected grid. Choose the collection again.');
+    if(inspection?.error)throw new Error(inspection.error);
+    if(!inspection)throw new Error('Chrome could not read the collection. Click Choose collection on page, select a video tile, and reopen Unscroll.');
+    if(!inspection.posts?.length)throw new Error('The chosen grid contains no supported video links. If videos are visible, this TikTok layout may not be supported. Choose the collection again.');
     const key='unscrollProgressV2:'+JSON.stringify([page,inspection.scope,collection]);
     const saved=(await chrome.storage.local.get(key))[key];
     const headers={'Content-Type':'application/json','X-Unscroll-Token':token};
@@ -153,6 +158,7 @@ async function run(mode){
     const step=async(action)=>{
       const [result]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:captureInPage,args:[action,collection,page,saved||null]});
       if(!result?.result)throw new Error('Could not read this TikTok page. Reopen Favorites and try again.');
+      if(result.result.error)throw new Error(result.result.error);
       if(result.result.scope!==inspection.scope)throw new Error('The selected collection changed. Import stopped.');
       return result.result;
     };
@@ -205,7 +211,7 @@ async function run(mode){
     }
     if(!found.size&&!stopped)throw new Error('No full post links found. Open Favorites and let the grid load.');
     el('status').textContent=`${counts()}. ${stopped?'Stopped.':reason} Open your library to process new posts.`;
-  }catch(e){el('status').textContent=`${counts()}. `+(e.message==='Failed to fetch'?'Could not reach Unscroll. Start the local helper and try again.':e.message);}
+  }catch(e){el('status').textContent=(found.size?`${counts()}. `:'')+(e.message==='Failed to fetch'?'Could not reach Unscroll. Start the local helper and try again.':e.message);}
   finally{
     buttons.forEach(id=>el(id).disabled=false);
     el('choose-collection').disabled=false;
