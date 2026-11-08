@@ -99,10 +99,13 @@ class MoveRequest(BaseModel):
 class RemoveImportsRequest(BaseModel):
     ids:list[str]=Field(default_factory=list,max_length=20000)
     all_unprocessed:bool=False
+    include_processed:bool=False
 
 
 def removable_imports(c, body):
-    rows=c.execute("SELECT id FROM posts WHERE entry IS NULL AND download_path=''").fetchall()
+    if body.include_processed and (body.all_unprocessed or not body.ids):
+        raise ValueError('Removing processed posts requires an explicit selection.')
+    rows=c.execute('SELECT id FROM posts' if body.include_processed else "SELECT id FROM posts WHERE entry IS NULL AND download_path=''").fetchall()
     selected=set(body.ids)
     return [r['id'] for r in rows if body.all_unprocessed or r['id'] in selected]
 
@@ -141,7 +144,7 @@ def remove_imports(body:RemoveImportsRequest):
         c.execute('INSERT INTO removed_imports VALUES(?,?,?)',(batch,json.dumps(archive),time.time()))
         c.executemany('DELETE FROM jobs WHERE post_id=?',[(ident,) for ident in ids])
         c.executemany('DELETE FROM posts WHERE id=?',[(ident,) for ident in ids])
-    return {'removed':len(ids),'message':f'Removed {len(ids)} unprocessed posts. You can undo this in Settings.'}
+    return {'removed':len(ids),'message':f'Removed {len(ids)} posts from your library. Downloaded files were kept. You can undo this in Settings.'}
 
 
 @app.post('/api/imports/undo')

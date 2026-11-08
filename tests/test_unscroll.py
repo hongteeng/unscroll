@@ -196,6 +196,38 @@ class Case(unittest.TestCase):
         self.assertTrue(db.setting('paused'))
         with db.connect() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM jobs').fetchone()[0],2)
 
+    def test_selected_processed_removal_preserves_files_and_undo_restores_entry(self):
+        ident=self.add();self.entry(ident)
+        other=self.add(URL.replace('100001','100002'));self.entry(other)
+        kept=Path(self.tmp.name)/'kept.mp4';kept.write_bytes(b'permanent media')
+        db.update(ident,download_path=str(kept),reviewed=1)
+        with db.connect() as c:
+            c.execute("INSERT INTO categories(id,name) VALUES(1,'Ideas')")
+            c.execute('INSERT INTO placements VALUES(?,?,?)',(ident,1,1))
+            c.execute('INSERT INTO vectors VALUES(?,?,?)',(ident,'hash','[1,0]'))
+        selection={'ids':[ident],'include_processed':True}
+        self.assertEqual(self.post('imports/remove-preview',selection).json()['ids'],[ident])
+        self.assertEqual(self.post('imports/remove',selection).json()['removed'],1)
+        self.assertIsNone(db.post(ident));self.assertIsNotNone(db.post(other))
+        self.assertEqual(kept.read_bytes(),b'permanent media')
+        with db.connect() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM placements').fetchone()[0],0)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM vectors').fetchone()[0],0)
+        self.assertEqual(self.post('imports/undo').status_code,200)
+        restored=db.post(ident)
+        self.assertEqual(restored['entry'],ENTRY);self.assertEqual(restored['source'],SOURCE)
+        self.assertEqual(restored['reviewed'],1);self.assertEqual(restored['download_path'],str(kept))
+        with db.connect() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM placements').fetchone()[0],1)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM vectors').fetchone()[0],1)
+
+    def test_processed_removal_requires_explicit_selection(self):
+        ident=self.add();self.entry(ident)
+        for body in ({'include_processed':True},{'include_processed':True,'all_unprocessed':True,'ids':[ident]}):
+            self.assertEqual(self.post('imports/remove-preview',body).status_code,400)
+            self.assertEqual(self.post('imports/remove',body).status_code,400)
+        self.assertIsNotNone(db.post(ident))
+
     def test_removal_requires_paused_queue_and_no_running_job(self):
         ident=self.add();db.enqueue('process',ident);db.put_setting('paused',False)
         self.assertEqual(self.post('imports/remove',{'ids':[ident]}).status_code,409)

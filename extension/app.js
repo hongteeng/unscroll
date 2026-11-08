@@ -109,10 +109,12 @@ document.addEventListener('click',event=>action(async()=>{
   if(b.id==='select-visible'){state.posts.forEach(p=>state.selected.add(p.id));renderCards();return;}
   if(b.id==='clear-selection'){state.selected.clear();renderCards();return;}
   if(b.id==='remove-unprocessed'||b.id==='remove-selected'){
-    const preview=await api('imports/remove-preview',b.id==='remove-unprocessed'?{all_unprocessed:true}:{ids:[...state.selected]});
-    if(!preview.count)return toast('No eligible unprocessed posts. Completed entries and permanent downloads are protected.');
-    if(!confirm(`Remove ${preview.count} unprocessed posts from Unscroll and cancel their queued jobs? ${b.id==='remove-unprocessed'?'This covers your whole library, regardless of filters. ':''}Your TikTok saves, completed entries and permanent downloads stay intact. You can undo removal in Settings.`))return;
-    const r=await api('imports/remove',{ids:preview.ids});
+    const includeProcessed=b.id==='remove-selected';
+    const preview=await api('imports/remove-preview',includeProcessed?{ids:[...state.selected],include_processed:true}:{all_unprocessed:true});
+    if(!preview.count)return toast(includeProcessed?'No selected posts remain in your library.':'No eligible unprocessed posts. Completed entries and permanent downloads are protected.');
+    const description=includeProcessed?'Their completed entries and category placements will also be removed from the library. Downloaded files stay on disk.':'This covers your whole library, regardless of filters. Completed entries and permanent downloads are protected.';
+    if(!confirm(`Remove ${preview.count} ${includeProcessed?'selected':'unprocessed'} posts from Unscroll and cancel their queued jobs? ${description} Your TikTok saves stay intact. You can undo removal in Settings.`))return;
+    const r=await api('imports/remove',{ids:preview.ids,...(includeProcessed?{include_processed:true}:{})});
     preview.ids.forEach(id=>state.selected.delete(id));
     if(state.active&&preview.ids.includes(state.active.id)){$('#detail-dialog').close();state.active=null;}
     toast(r.message);return refresh();

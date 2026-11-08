@@ -55,6 +55,13 @@ async function run(token,offline=false){
   await app.click('remove-unprocessed');
   const removal=app.calls.find(c=>c.url.endsWith('/imports/remove'));
   assert.deepEqual(JSON.parse(removal.opts.body),{ids:['123','456']});
+  vm.runInNewContext('state.selected.add("123")',app.context);
+  let confirmation='';app.context.confirm=message=>{confirmation=message;return true;};
+  await app.click('remove-selected');
+  const selectedRemoval=app.calls.filter(c=>c.url.endsWith('/imports/remove')).at(-1);
+  assert.deepEqual(JSON.parse(selectedRemoval.opts.body),{ids:['123','456'],include_processed:true});
+  assert.match(confirmation,/completed entries and category placements/);
+  assert.match(confirmation,/Downloaded files stay on disk/);
   await app.click('undo-removal');
   assert(app.calls.some(c=>c.url.endsWith('/imports/undo')));
   console.log('Extension boot checks passed: unpaired, pairing, paired API routing and helper unavailable.');
