@@ -65,20 +65,36 @@ class Core(unittest.TestCase):
             with self.assertRaises(ValueError):media.safe_image_url(u)
         self.assertTrue(media.safe_image_url('https://p16.tiktokcdn.com/a.jpg'))
 
-    def test_quotes_and_specifics_must_match(self):
+    def test_unverifiable_items_are_dropped_never_saved(self):
         self.assertEqual(ai.verify(ai.Entry(**ENTRY),SOURCE)['title'],'Daily writing')
         bad=ai.Entry(**ENTRY);bad.key_points[0].quote='Invented quote'
-        with self.assertRaises(ValueError):ai.verify(bad,SOURCE)
+        out=ai.verify(bad,SOURCE)
+        self.assertEqual(len(out['key_points']),2)
+        self.assertNotIn('Invented quote',str(out))
+        self.assertTrue(out['thin'])
+        self.assertIn('left out',out['uncertainty'])
         bad=ai.Entry(**ENTRY);bad.key_points[0].quote='   '
-        with self.assertRaises(ValueError):ai.verify(bad,SOURCE)
+        self.assertEqual(len(ai.verify(bad,SOURCE)['key_points']),2)
         bad=ai.Entry(**ENTRY);bad.specifics=['A nonexistent book']
-        with self.assertRaises(ValueError):ai.verify(bad,SOURCE)
+        out=ai.verify(bad,SOURCE)
+        self.assertEqual(out['specifics'],[])
+        self.assertEqual(len(out['key_points']),3)
+        self.assertFalse(out['thin'])
+
+    def test_curly_quotes_and_case_still_match(self):
+        src={'caption':'It\u2019s a 10-MINUTE timer.','segments':[],'warnings':[]}
+        e=ai.Entry(**{**ENTRY,'key_points':[{'text':'x','quote':"it's a 10-minute timer."}]*3,'specifics':[]})
+        self.assertEqual(len(ai.verify(e,src)['key_points']),3)
 
     def test_thin_entries_can_have_zero_points(self):
         e=ai.Entry(**{**ENTRY,'key_points':[],'specifics':[],'thin':True})
         self.assertEqual(ai.verify(e,{'caption':'','segments':[]})['key_points'],[])
-        e.thin=False
-        with self.assertRaises(ValueError):ai.verify(e,SOURCE)
+
+    def test_too_few_points_are_marked_thin_instead_of_failing(self):
+        e=ai.Entry(**{**ENTRY,'key_points':[],'specifics':[],'thin':False})
+        out=ai.verify(e,SOURCE)
+        self.assertTrue(out['thin'])
+        self.assertIn('marked thin',out['uncertainty'])
 
     def test_duplicate_queue_jobs_are_not_added(self):
         ident=self.add();self.assertTrue(db.enqueue('process',ident));self.assertFalse(db.enqueue('process',ident))

@@ -28,21 +28,34 @@ class AIRequests(unittest.TestCase):
     def ask(self):
         return ai.ask('entry','Write an entry',{'caption':'One idea'},ai.Entry)
 
-    def test_extra_label_triggers_one_fresh_validated_request(self):
+    def test_extra_label_is_ignored_without_a_second_request(self):
         invalid=copy.deepcopy(ENTRY);invalid['key_points'][0]['label']='Speech'
+        with patch('httpx.post',return_value=response(invalid)) as send:
+            result=self.ask()
+        self.assertEqual(send.call_count,1)
+        self.assertNotIn('label',result.key_points[0].model_dump())
+
+    def test_list_returned_as_json_string_is_decoded(self):
+        import json
+        sloppy=copy.deepcopy(ENTRY);sloppy['key_points']=json.dumps(ENTRY['key_points'])
+        with patch('httpx.post',return_value=response(sloppy)) as send:
+            result=self.ask()
+        self.assertEqual(send.call_count,1)
+        self.assertEqual(result.key_points[0].quote,'One idea')
+
+    def test_invalid_response_retries_with_the_failing_field_named(self):
+        bad=copy.deepcopy(ENTRY);bad['specifics']=['x']*50
         prompts=[]
-        responses=iter([response(invalid),response(ENTRY)])
+        responses=iter([response(bad),response(ENTRY)])
         def send(*args,**kwargs):
             prompts.append(kwargs['json']['system']);return next(responses)
-        with patch('httpx.post',side_effect=send) as send:
-            result=self.ask()
-        self.assertEqual(send.call_count,2)
-        self.assertNotIn('label',result.key_points[0].model_dump())
-        self.assertIn('previous result did not match',prompts[1])
+        with patch('httpx.post',side_effect=send):
+            self.ask()
+        self.assertIn('specifics',prompts[1])
         with db.connect() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM usage').fetchone()[0],2)
 
     def test_repeated_invalid_response_stops_without_raw_validation_dump(self):
-        invalid=copy.deepcopy(ENTRY);invalid['key_points'][0]['label']='private-value'
+        invalid=copy.deepcopy(ENTRY);invalid['key_points'][0]['quote']='private-value'*200
         with patch('httpx.post',return_value=response(invalid)) as send:
             with self.assertRaisesRegex(ValueError,'invalid structured response twice') as error:self.ask()
         self.assertEqual(send.call_count,2)
@@ -64,7 +77,10 @@ class AIRequests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'did not finish responding'):self.ask()
         self.assertEqual(send.call_count,1)
 
-    def test_schema_retry_does_not_bypass_source_evidence_checks(self):
+    def test_invented_quotes_never_reach_the_saved_entry(self):
         bad=copy.deepcopy(ENTRY);bad['key_points'][0]['quote']='Invented statement'
         with patch('httpx.post',return_value=response(bad)):
-            with self.assertRaisesRegex(ValueError,'quote did not match'):ai.write({'caption':'One idea'})
+            saved=ai.write({'caption':'One idea'})
+        self.assertEqual(saved['key_points'],[])
+        self.assertNotIn('Invented statement',str(saved))
+        self.assertIn('left out',saved['uncertainty'])

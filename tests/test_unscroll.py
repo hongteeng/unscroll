@@ -71,15 +71,17 @@ class Case(unittest.TestCase):
     def test_quote_and_specifics_validation(self):
         self.assertEqual(ai.verify(ai.Entry(**ENTRY),SOURCE)['title'],ENTRY['title'])
         bad=ai.Entry(**ENTRY);bad.key_points[0].quote='Use the Pomodoro method'
-        with self.assertRaises(ValueError):ai.verify(bad,SOURCE)
+        out=ai.verify(bad,SOURCE)
+        self.assertEqual(len(out['key_points']),2)
+        self.assertNotIn('Pomodoro',str(out['key_points']))
         bad=ai.Entry(**ENTRY);bad.specifics=['Pomodoro']
-        with self.assertRaises(ValueError):ai.verify(bad,SOURCE)
+        self.assertEqual(ai.verify(bad,SOURCE)['specifics'],[])
 
     def test_thin_source_never_requires_invented_points(self):
         e=ai.Entry(**{**ENTRY,'key_points':[],'action_steps':[],'specifics':[],'thin':True})
         self.assertEqual(ai.verify(e,{'caption':'','segments':[]})['key_points'],[])
         e.thin=False
-        with self.assertRaises(ValueError):ai.verify(e,SOURCE)
+        self.assertTrue(ai.verify(e,SOURCE)['thin'])
 
     def test_local_token_origin_and_host_protection(self):
         self.assertEqual(self.client.get('/api/posts').status_code,401)

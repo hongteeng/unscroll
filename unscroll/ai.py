@@ -7,13 +7,13 @@ from . import db
 
 
 class Evidence(BaseModel):
-    model_config=ConfigDict(extra='forbid')
+    model_config=ConfigDict(extra='ignore')
     text: str = Field(min_length=1,max_length=1500)
     quote: str = Field(min_length=1,max_length=2000)
 
 
 class Entry(BaseModel):
-    model_config=ConfigDict(extra='forbid')
+    model_config=ConfigDict(extra='ignore')
     title: str = Field(min_length=1,max_length=250)
     key_points: list[Evidence] = Field(max_length=7)
     action_steps: list[Evidence] = Field(max_length=12)
@@ -37,6 +37,17 @@ class Proposal(BaseModel):
 class Placement(BaseModel):
     primary_id: int
     extra_ids: list[int] = Field(max_length=10)
+
+
+def _decode_list_fields(raw,schema):
+    """Claude sometimes returns a list field as a JSON string. Decode it before validating."""
+    if not isinstance(raw,dict): return raw
+    out=dict(raw)
+    for name,field in schema.model_fields.items():
+        if getattr(field.annotation,'__origin__',None) is list and isinstance(out.get(name),str):
+            try: out[name]=json.loads(out[name])
+            except ValueError: pass
+    return out
 
 
 def ask(purpose, system, data, schema):
@@ -77,7 +88,7 @@ def ask(purpose, system, data, schema):
         tool=next((x for x in payload.get('content',[]) if x.get('type')=='tool_use' and x.get('name')=='record'),None)
         if tool:
             try:
-                return schema.model_validate(tool.get('input'))
+                return schema.model_validate(_decode_list_fields(tool.get('input'),schema))
             except ValidationError as e:
                 problem='; '.join(f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()[:4])
         request['system']+=' The previous result did not match the schema. Generate a fresh record using exactly the declared fields, without extras such as label. Use only the supplied source. Fix these problems: '+(problem or 'no record was returned')+'.'
@@ -89,16 +100,23 @@ def source_text(source):
 
 
 def verify(entry,source):
-    norm=lambda s: re.sub(r'\s+',' ',s).strip()
+    """Keep only items whose quote or text really appears in the source. Unverifiable items are dropped, never saved."""
+    def norm(s):
+        s=s.replace('\u2019',"'").replace('\u2018',"'").replace('\u201c','"').replace('\u201d','"')
+        return re.sub(r'\s+',' ',s).strip().casefold()
     text=norm(source_text(source))
-    for e in entry.key_points+entry.action_steps:
-        if not norm(e.quote) or norm(e.quote) not in text:
-            raise ValueError('An AI evidence quote did not match the source. Entry was rejected; retry or inspect the extraction.')
-    for s in entry.specifics:
-        if not s.strip() or norm(s) not in text:
-            raise ValueError('An AI specific was not verbatim in the source. Entry was rejected.')
+    quote_ok=lambda e: bool(norm(e.quote)) and norm(e.quote) in text
+    kept_points=[e for e in entry.key_points if quote_ok(e)]
+    kept_actions=[e for e in entry.action_steps if quote_ok(e)]
+    kept_specifics=[x for x in entry.specifics if x.strip() and norm(x) in text]
+    dropped=(len(entry.key_points)-len(kept_points))+(len(entry.action_steps)-len(kept_actions))+(len(entry.specifics)-len(kept_specifics))
+    entry.key_points,entry.action_steps,entry.specifics=kept_points,kept_actions,kept_specifics
+    notes=[]
+    if dropped: notes.append(f'{dropped} AI-written item(s) were left out because their quotes could not be matched to the source.')
     if not entry.thin and len(entry.key_points)<3:
-        raise ValueError('AI supplied fewer than three points without marking the source thin.')
+        entry.thin=True
+        notes.append('Fewer than three verified points were found, so this entry is marked thin.')
+    if notes: entry.uncertainty=' '.join(x for x in [entry.uncertainty.strip()]+notes if x)
     return entry.model_dump()
 
 
