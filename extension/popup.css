@@ -12,4 +12,5 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-
 button:disabled{opacity:.5;cursor:wait}
 .note{font-size:12px}
 summary{cursor:pointer;font-size:13px;margin-top:12px}
-#status{font-size:13px;overflow-wrap:anywhere}
+#status{font-size:13px;font-weight:600;overflow-wrap:anywhere;margin:0 0 12px;padding:10px;border:1px solid var(--ink);border-radius:var(--r);background:var(--surface)}
+#status:empty{display:none}

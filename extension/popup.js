@@ -143,6 +143,7 @@ let stopped=false;
 const buttons=['check','continue','rescan'];
 const postId=p=>p.url.match(/\/(?:video|photo)\/(\d+)/)?.[1];
 async function run(mode){
+  el('status').textContent='Working…';
   buttons.forEach(id=>el(id).disabled=true);
   el('choose-collection').disabled=true;
   el('token').disabled=el('collection').disabled=true;
