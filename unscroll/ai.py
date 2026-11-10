@@ -35,7 +35,7 @@ class Proposal(BaseModel):
 
 
 class Placement(BaseModel):
-    primary_id: int
+    primary_id: int | None = None
     extra_ids: list[int] = Field(max_length=10)
 
 
@@ -154,10 +154,11 @@ def place(post):
     leaves+=[{'id':r['id'],'category':r['name'],'subcategory':''} for r in db.tree() if not r['children']]
     if not leaves: return
     rule=(db.setting('category_guidance','') or '').strip()
-    result=ask('placement','Assign this entry to exactly one primary place from the supplied IDs; a category with no subcategory is a place itself. '
+    result=ask('placement','Assign this entry to exactly one primary place from the supplied IDs only if it genuinely belongs there; a category with no subcategory is a place itself. If nothing fits, return primary_id null instead of forcing it into the closest one. '
                'Add extra places only when genuinely useful. Use only listed IDs. Never rewrite the entry.'
                +(' Follow the user\'s standing instructions over your own judgment: '+rule if rule else ''),
                {'entry':post['entry'],'subcategories':leaves},Placement)
+    if result.primary_id is None: return  # no existing category fits; leave it awaiting placement
     valid={s['id'] for s in leaves}
     ids=[result.primary_id]+result.extra_ids
     if any(i not in valid for i in ids): raise ValueError('AI returned an unknown subcategory; retry placement.')
