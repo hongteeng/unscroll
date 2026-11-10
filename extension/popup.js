@@ -9,67 +9,11 @@ el('open-library').addEventListener('click',async()=>{
   if(tabs.length)await chrome.tabs.update(tabs[0].id,{active:true});
   else await chrome.tabs.create({url});
 });
-// This function runs in the TikTok tab and must not use popup variables.
-function chooseCollectionInPage(){
-  globalThis.__unscrollPickerCleanup?.();
-  delete globalThis.__unscrollScope;
-  const notice=document.createElement('div');
-  notice.textContent='Unscroll: click a video tile INSIDE the collection you want. Escape cancels.';
-  notice.style.cssText='position:fixed;top:12px;left:12px;z-index:2147483647;background:#294e3f;color:white;padding:18px;border-radius:8px;font:16px sans-serif;pointer-events:none';
-  document.documentElement.append(notice);
-  const cleanup=()=>{document.removeEventListener('click',pick,true);document.removeEventListener('keydown',cancel,true);notice.remove();delete globalThis.__unscrollPickerCleanup;};
-  const cancel=e=>{if(e.key==='Escape')cleanup();};
-  const pick=e=>{
-    // Supported TikTok grids only. Never fall back to document/main/body.
-    let root=e.target.closest('[data-e2e="user-post-item-list"], [data-e2e="user-favorite-item-list"], [data-e2e="user-collection-item-list"]');
-    let tile=e.target.closest('[data-e2e="user-post-item"], [data-e2e="user-collection-item"], [data-e2e="user-favorite-item"]');
-    e.preventDefault();e.stopImmediatePropagation();
-    let generic=false;
-    if(!root||!tile||!root.contains(tile)){
-      // TikTok changes its grid markup often. Fall back to the post links themselves.
-      const LINK='a[href*="/video/"],a[href*="/photo/"]';
-      const link=e.target.closest(LINK)||e.target.closest('li,div')?.querySelector(LINK);
-      if(link){
-        let best=null;
-        for(let n=link.parentElement;n&&n!==document.body&&n!==document.documentElement;n=n.parentElement){
-          if(n.querySelector('h1,nav,header,[role="tablist"]'))break;
-          if(new Set([...n.querySelectorAll(LINK)].map(x=>x.pathname)).size>=3)best=n;
-        }
-        if(best){root=best;tile=link;generic=true;}
-      }
-    }
-    if(!root||!tile||!root.contains(tile)){
-      notice.textContent='Unscroll could not identify this video grid. Click a video tile in the open collection, or press Escape. No posts imported.';
-      return;
-    }
-    const shown=node=>{
-      for(let p=node;p;p=p.parentElement){
-        if(p.hidden||p.getAttribute('aria-hidden')==='true')return false;
-        const style=getComputedStyle(p);
-        if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;
-      }
-      return node.getClientRects().length>0||(getComputedStyle(node).display==='contents'&&[...node.querySelectorAll('*')].some(child=>child.getClientRects().length>0&&getComputedStyle(child).visibility==='visible'));
-    };
-    const headings=[...document.querySelectorAll('h1,h2,[role="tab"][aria-selected="true"]')].filter(n=>!root.contains(n)&&shown(n)).map(n=>n.textContent.trim());
-    const markers=[];
-    for(let p=root;p;p=p.parentElement)markers.push([p.id,p.getAttribute('data-collection-id'),p.getAttribute('aria-label')]);
-    globalThis.__unscrollScope={root,generic,id:crypto.randomUUID(),page:location.href,identity:JSON.stringify([headings,markers])};
-    cleanup();
-    const done=document.createElement('div');
-    done.textContent='Collection selected. Reopen Unscroll to review the count and import.';
-    done.style.cssText=notice.style.cssText;
-    document.documentElement.append(done);setTimeout(()=>done.remove(),5000);
-  };
-  document.addEventListener('click',pick,true);document.addEventListener('keydown',cancel,true);
-  globalThis.__unscrollPickerCleanup=cleanup;
-}
 async function captureInPage(action,collection,page,checkpoint){
   // Return failures explicitly: Chrome may drop rejected injection results.
   try{
   if(location.origin+location.pathname+location.search+location.hash!==page)throw new Error('The TikTok page changed. Open the popup again on the collection you want.');
-  const scope=globalThis.__unscrollScope;
-  if(!scope||!scope.root.isConnected||scope.page!==location.href)throw new Error('Choose the collection on the TikTok page first. No posts imported.');
-  const root=scope.root;
+  let scope=globalThis.__unscrollScope;
   const visible=node=>{
     for(let p=node;p;p=p.parentElement){
       if(p.hidden||p.getAttribute('aria-hidden')==='true')return false;
@@ -78,6 +22,28 @@ async function captureInPage(action,collection,page,checkpoint){
     }
     return node.getClientRects().length>0||(getComputedStyle(node).display==='contents'&&[...node.querySelectorAll('*')].some(child=>child.getClientRects().length>0&&getComputedStyle(child).visibility==='visible'));
   };
+  // Find the video grid automatically: the whole collection or Favorites page, no clicking.
+  if(!scope||!scope.root.isConnected||scope.page!==location.href){
+    const KNOWN='[data-e2e="user-post-item-list"], [data-e2e="user-favorite-item-list"], [data-e2e="user-collection-item-list"]';
+    const ITEM='[data-e2e="user-post-item"], [data-e2e="user-collection-item"], [data-e2e="user-favorite-item"]';
+    const LINK='a[href*="/video/"],a[href*="/photo/"]';
+    let found=[...document.querySelectorAll(KNOWN)].filter(visible).sort((x,y)=>y.querySelectorAll(ITEM).length-x.querySelectorAll(ITEM).length)[0]||null;
+    let generic=false;
+    if(!found||!found.querySelectorAll(ITEM).length){
+      found=null;let most=0;
+      for(const link of [...document.querySelectorAll(LINK)].filter(visible).slice(0,40)){
+        for(let n=link.parentElement;n&&n!==document.body&&n!==document.documentElement;n=n.parentElement){
+          if(n.querySelector('h1,nav,header,[role="tablist"]'))break;
+          const count=new Set([...n.querySelectorAll(LINK)].map(x=>x.pathname)).size;
+          if(count>=3&&count>most){most=count;found=n;generic=true;}
+        }
+      }
+    }
+    if(!found)throw new Error('No video grid found on this TikTok page. Open your Favorites or a collection, let the videos load, then try again.');
+    scope={root:found,generic,id:'page',page:location.href};
+    globalThis.__unscrollScope=scope;
+  }
+  const root=scope.root;
   const identity=()=>{
     const headings=[...document.querySelectorAll('h1,h2,[role="tab"][aria-selected="true"]')].filter(n=>!root.contains(n)&&visible(n)).map(n=>n.textContent.trim());
     const markers=[];
@@ -145,7 +111,6 @@ const postId=p=>p.url.match(/\/(?:video|photo)\/(\d+)/)?.[1];
 async function run(mode){
   el('status').textContent='Working…';
   buttons.forEach(id=>el(id).disabled=true);
-  el('choose-collection').disabled=true;
   el('token').disabled=el('collection').disabled=true;
   el('stop').hidden=false;el('stop').disabled=false;stopped=false;
   let added=0,updated=0,found=new Set();
@@ -161,8 +126,8 @@ async function run(mode){
     const page=u.origin+u.pathname+u.search+u.hash;
     const inspection=(await chrome.scripting.executeScript({target:{tabId:tab.id},func:captureInPage,args:['inspect',collection,page,null]}))[0]?.result;
     if(inspection?.error)throw new Error(inspection.error);
-    if(!inspection)throw new Error('Chrome could not read the collection. Click Choose collection on page, select a video tile, and reopen Unscroll.');
-    if(!inspection.posts?.length)throw new Error('The chosen grid contains no supported video links. If videos are visible, this TikTok layout may not be supported. Choose the collection again.');
+    if(!inspection)throw new Error('Chrome could not read this TikTok page. Refresh it and try again.');
+    if(!inspection.posts?.length)throw new Error('No video links found on this page yet. Let the videos load and try again.');
     const key='unscrollProgressV2:'+JSON.stringify([page,inspection.scope,collection]);
     const saved=(await chrome.storage.local.get(key))[key];
     const headers={'Content-Type':'application/json','X-Unscroll-Token':token};
@@ -179,7 +144,7 @@ async function run(mode){
       if(result.result.scope!==inspection.scope)throw new Error('The selected collection changed. Import stopped.');
       return result.result;
     };
-    if(!confirm(`Selected grid: ${inspection.posts.length} loaded posts. Import only from this grid? Keep this collection open while importing.`))return;
+    if(!confirm(`Found ${inspection.posts.length} loaded posts on this page. Import all of them? Keep this page open while importing.`))return;
     let batch;
     if(mode==='continue'&&saved?.id){
       el('status').textContent='Returning to your last imported post…';
@@ -231,7 +196,6 @@ async function run(mode){
   }catch(e){el('status').textContent=(found.size?`${counts()}. `:'')+(e.message==='Failed to fetch'?'Could not reach Unscroll. Start the local helper and try again.':e.message);}
   finally{
     buttons.forEach(id=>el(id).disabled=false);
-    el('choose-collection').disabled=false;
     el('token').disabled=el('collection').disabled=false;el('stop').hidden=true;
   }
 }
@@ -239,12 +203,3 @@ el('check').addEventListener('click',()=>run('check'));
 el('continue').addEventListener('click',()=>run('continue'));
 el('rescan').addEventListener('click',()=>run('rescan'));
 el('stop').addEventListener('click',()=>{stopped=true;el('stop').disabled=true;el('status').textContent='Stopping after the current batch…';});
-el('choose-collection').addEventListener('click',async()=>{
-  try{
-    const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-    const url=new URL(tab.url||'');
-    if(url.protocol!=='https:'||!['www.tiktok.com','tiktok.com'].includes(url.hostname))throw new Error('Open the TikTok collection first.');
-    await chrome.scripting.executeScript({target:{tabId:tab.id},func:chooseCollectionInPage});
-    window.close();
-  }catch(e){el('status').textContent=e.message;}
-});
