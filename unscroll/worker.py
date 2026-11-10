@@ -27,7 +27,7 @@ class Worker:
             if not row:
                 self.stop.wait(.5); continue
             job=dict(row)
-            stage={'place':'placing an entry','download':'downloading media','propose':'proposing categories','refine':'reviewing how your saves are filed','index':'building local search'}.get(job['kind'],'loading the post')
+            stage={'place':'placing an entry','download':'downloading media','propose':'proposing categories','index':'building local search'}.get(job['kind'],'loading the post')
             try:
                 p=db.post(job['post_id']) if job['post_id'] else None
                 if job['kind']=='process':
@@ -42,7 +42,7 @@ class Worker:
                         entry=ai.write(p['source'])
                         db.update(p['id'],entry=entry,status='written',error='',reviewed=0)
                         p=db.post(p['id'])
-                    if db.tree() and p['status']!='categorised': ai.place(p)
+                    if (db.tree() or ai.collection_name(p)) and p['status']!='categorised': ai.place(p)
                     try:
                         search.index(db.post(p['id']))
                     except Exception:
@@ -50,7 +50,6 @@ class Worker:
                 elif job['kind']=='place': ai.place(p)
                 elif job['kind']=='download': media.download(p)
                 elif job['kind']=='propose': ai.propose()
-                elif job['kind']=='refine': ai.refine()
                 elif job['kind']=='index':
                     with db.connect() as c:
                         ids=[r[0] for r in c.execute('SELECT id FROM posts WHERE entry IS NOT NULL')]

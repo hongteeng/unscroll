@@ -118,3 +118,12 @@ def tree():
         counts = {r[0]:r[1] for r in c.execute('SELECT category_id,COUNT(*) FROM placements GROUP BY category_id')}
     return [dict(r, count=counts.get(r['id'],0), children=[dict(s,count=counts.get(s['id'],0))
             for s in rows if s['parent_id']==r['id']]) for r in rows if r['parent_id'] is None]
+
+
+def ensure_category(name):
+    """Id of the top-level category with this name (any case), creating it if needed. None if it has subcategories."""
+    with connect() as c:
+        row=c.execute('SELECT id FROM categories WHERE parent_id IS NULL AND name=? COLLATE NOCASE',(name,)).fetchone()
+        if row:
+            return None if c.execute('SELECT 1 FROM categories WHERE parent_id=?',(row['id'],)).fetchone() else row['id']
+        return c.execute('INSERT INTO categories(name) VALUES(?)',(name,)).lastrowid

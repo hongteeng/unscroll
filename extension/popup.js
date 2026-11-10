@@ -105,6 +105,18 @@ async function captureInPage(action,collection,page,checkpoint){
   return {posts:rows,y:scroller.scrollTop,anchorFound,scope:scope.id};
   }catch(error){return {error:error.message||'Could not read the chosen collection. Choose it again on the TikTok page.'};}
 }
+// Runs inside the TikTok tab. Reads the open collection's name from its address and heading.
+function detectCollectionName(){
+  const m=location.pathname.match(/\/collection\/([^/?#]+)/);
+  if(!m)return '';
+  let slug='';
+  try{slug=decodeURIComponent(m[1]);}catch{slug=m[1];}
+  slug=slug.replace(/-\d{6,}$/,'');
+  const plain=slug.replace(/-/g,' ').trim();
+  const key=t=>t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'');
+  const heading=[...document.querySelectorAll('h1,h2,[data-e2e*="collection"]')].map(n=>n.textContent.trim()).find(t=>t&&t.length<=80&&key(t)===key(plain));
+  return (heading||plain).slice(0,80);
+}
 let stopped=false;
 const buttons=['check','continue','rescan'];
 const postId=p=>p.url.match(/\/(?:video|photo)\/(\d+)/)?.[1];
@@ -122,7 +134,11 @@ async function run(mode){
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
     const u=new URL(tab.url||'');
     if(u.protocol!=='https:'||!(u.hostname==='www.tiktok.com'||u.hostname==='tiktok.com'))throw new Error('Open your Favorites or a post on www.tiktok.com first.');
-    const collection=el('collection').value.trim();
+    let collection=el('collection').value.trim();
+    if(!collection){
+      collection=(await chrome.scripting.executeScript({target:{tabId:tab.id},func:detectCollectionName}))[0]?.result||'';
+      if(collection)el('collection').value=collection;
+    }
     const page=u.origin+u.pathname+u.search+u.hash;
     const inspection=(await chrome.scripting.executeScript({target:{tabId:tab.id},func:captureInPage,args:['inspect',collection,page,null]}))[0]?.result;
     if(inspection?.error)throw new Error(inspection.error);

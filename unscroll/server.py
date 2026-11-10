@@ -203,7 +203,7 @@ def state():
         creators=[r[0] for r in c.execute("SELECT DISTINCT creator FROM posts WHERE creator!='' ORDER BY creator")]
     return {'counts':counts,'job_counts':job_counts,'jobs':jobs,'paused':db.setting('paused',True),
             'tree':db.tree(),'proposal':db.setting('proposal'),'usage':usage,'creators':creators,
-            'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture'),'guidance':db.setting('category_guidance',''),'refinement':db.setting('refinement') or []}
+            'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture'),'guidance':db.setting('category_guidance',''),'chat':chat_view()}
 
 
 _SMALL={'a','i','to','in','of','it','is','me','my','we','up','on','at','or','if','so','no','do','go','be','an','as','by','he','us','you','how','the','and','for','are','not','but'}
@@ -391,47 +391,79 @@ def propose(body:Guidance=Guidance()):
     return {'message':'Category proposal queued. Review it before approval.'}
 
 
-@app.post('/api/categories/refine')
-def refine_cats(body:Guidance=Guidance()):
-    if not db.tree(): raise ValueError('Approve a category tree first.')
-    if body.guidance.strip(): db.put_setting('category_guidance',body.guidance.strip())
-    db.put_setting('refinement',None)
-    db.enqueue('refine'); db.put_setting('paused',False)
-    return {'message':'Reviewing how your saves are filed. Suggested changes will appear in Categories.'}
-
-
-class ApplyMove(BaseModel):
-    index:int
-
-
-@app.post('/api/categories/refinement/apply')
-def apply_move(body:ApplyMove):
-    idle()
-    moves=db.setting('refinement') or []
-    if not 0<=body.index<len(moves): raise ValueError('That suggestion is no longer available.')
-    m=moves[body.index]
+def chat_view():
+    """The saved conversation plus a readable preview of the changes waiting for approval."""
+    pending=db.setting('chat_pending') or []
     with db.connect() as c:
-        row=c.execute('SELECT id FROM categories WHERE parent_id IS NULL AND name=? COLLATE NOCASE',(m['name'],)).fetchone()
-        if row:
-            if c.execute('SELECT 1 FROM categories WHERE parent_id=?',(row['id'],)).fetchone():
-                raise ValueError(f"{m['name']} already has subcategories. Rename the suggestion in Categories first.")
-            cat=row['id']
-        else: cat=c.execute('INSERT INTO categories(name) VALUES(?)',(m['name'],)).lastrowid
-        for pid in m['entry_ids']:
-            if not c.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): continue
-            c.execute('DELETE FROM placements WHERE post_id=?',(pid,))
-            c.execute('INSERT INTO placements VALUES(?,?,1)',(pid,cat,))
-            c.execute("UPDATE posts SET status='categorised' WHERE id=?",(pid,))
-    del moves[body.index]; db.put_setting('refinement',moves)
-    return {'message':f"Moved {len(m['entry_ids'])} save(s) to {m['name']}."}
+        titles={r['id']:json.loads(r['entry'])['title'] for r in c.execute('SELECT id,entry FROM posts WHERE entry IS NOT NULL')}
+    out=[]
+    for ch in pending:
+        if ch['kind']=='move': label=f"Move {len(ch['entry_ids'])} save{'s' if len(ch['entry_ids'])!=1 else ''} to “{ch['name']}”"
+        elif ch['kind']=='rename': label=f"Rename “{ch['source']}” to “{ch['name']}”"
+        elif ch['kind']=='merge': label=f"Merge “{ch['source']}” into “{ch['name']}”"
+        else: label=f"Delete “{ch['source']}” if it is empty"
+        out.append({'label':label,'titles':[titles[i] for i in ch['entry_ids'] if i in titles][:6]})
+    return {'history':db.setting('chat_history',[]) or [],'pending':out}
 
 
-@app.post('/api/categories/refinement/dismiss')
-def dismiss_move(body:ApplyMove):
-    moves=db.setting('refinement') or []
-    if 0<=body.index<len(moves): del moves[body.index]
-    db.put_setting('refinement',moves)
-    return {'message':'Suggestion dismissed.'}
+class ChatMessage(BaseModel):
+    message:str=Field(min_length=1,max_length=2000)
+
+
+@app.post('/api/categories/chat')
+def chat_turn(body:ChatMessage):
+    from . import ai
+    ai.chat(body.message.strip())
+    return chat_view()
+
+
+@app.post('/api/categories/chat/discard')
+def chat_discard():
+    db.put_setting('chat_pending',[])
+    return chat_view()
+
+
+@app.post('/api/categories/chat/apply')
+def chat_apply():
+    idle()
+    changes=db.setting('chat_pending') or []
+    notes=[]
+    with db.connect() as c:
+        def root(name): return c.execute('SELECT id FROM categories WHERE parent_id IS NULL AND name=? COLLATE NOCASE',(name,)).fetchone()
+        def leaf(name):
+            row=root(name)
+            if row and c.execute('SELECT 1 FROM categories WHERE parent_id=?',(row['id'],)).fetchone(): return None
+            return row['id'] if row else c.execute('INSERT INTO categories(name) VALUES(?)',(name,)).lastrowid
+        for ch in changes:
+            if ch['kind']=='move':
+                cat=leaf(ch['name'])
+                if not cat: notes.append(f"{ch['name']} has subcategories, so nothing was moved there."); continue
+                for pid in ch['entry_ids']:
+                    if not c.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): continue
+                    c.execute('DELETE FROM placements WHERE post_id=?',(pid,))
+                    c.execute('INSERT INTO placements VALUES(?,?,1)',(pid,cat))
+                    c.execute("UPDATE posts SET status='categorised' WHERE id=?",(pid,))
+            elif ch['kind']=='rename':
+                row=root(ch['source'])
+                if not row: continue
+                other=root(ch['name'])
+                if other and other['id']!=row['id']: ch={**ch,'kind':'merge'}
+                else: c.execute('UPDATE categories SET name=? WHERE id=?',(ch['name'],row['id'])); continue
+            if ch['kind']=='merge':
+                a,b=root(ch['source']),leaf(ch['name'])
+                if not a or not b or a['id']==b: continue
+                c.execute('UPDATE OR IGNORE placements SET category_id=? WHERE category_id=?',(b,a['id']))
+                c.execute('DELETE FROM categories WHERE id=?',(a['id'],))
+            elif ch['kind']=='delete':
+                a=root(ch['source'])
+                if a and not c.execute('SELECT 1 FROM placements WHERE category_id=?',(a['id'],)).fetchone() and not c.execute('SELECT 1 FROM categories WHERE parent_id=?',(a['id'],)).fetchone():
+                    c.execute('DELETE FROM categories WHERE id=?',(a['id'],))
+                elif a: notes.append(f"{ch['source']} still has saves, so it was kept.")
+    db.put_setting('chat_pending',[])
+    history=db.setting('chat_history',[]) or []
+    history.append({'role':'assistant','text':'Done. '+(' '.join(notes) if notes else 'The changes are applied.')})
+    db.put_setting('chat_history',history[-30:])
+    return chat_view()
 
 
 @app.post('/api/categories/approve')
