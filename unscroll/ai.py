@@ -27,11 +27,11 @@ class Entry(BaseModel):
 
 class Branch(BaseModel):
     name: str = Field(min_length=1,max_length=80)
-    subcategories: list[str] = Field(min_length=1,max_length=20)
+    subcategories: list[str] = Field(min_length=1,max_length=6)
 
 
 class Proposal(BaseModel):
-    categories: list[Branch] = Field(min_length=1,max_length=20)
+    categories: list[Branch] = Field(min_length=1,max_length=8)
 
 
 class Placement(BaseModel):
@@ -138,8 +138,11 @@ def propose():
         entries=[{'id':r['id'],'title':json.loads(r['entry'])['title'],'topics':json.loads(r['entry'])['topics']}
                  for r in c.execute('SELECT id,entry FROM posts WHERE entry IS NOT NULL')]
     if not entries: raise ValueError('Process some posts before suggesting categories.')
-    result=ask('categories','Propose a useful two-level category tree from ALL supplied entry titles and topics. '
-               'Use plain specific names, avoid near duplicates, and include a sensible home for unusual material. '
+    result=ask('categories','Propose a two-level category tree from ALL supplied entry titles and topics, as a person would shelve their own saved videos. '
+               'Think in broad life areas such as Entrepreneurship, Health and fitness, Cooking, Money, Learning, Creative work. '
+               'Use 3 to 7 top-level categories, each with at most 4 subcategories, and only make a subcategory when at least 3 entries belong in it. '
+               'Prefer a single broad category over several narrow slices of the same theme, even when most entries share that theme. '
+               'Use plain names, avoid near duplicates, and include a sensible home for unusual material. '
                'Never write or merge entries. The user will review the proposal before approval.',entries,Proposal)
     db.put_setting('proposal',result.model_dump()['categories'])
 
