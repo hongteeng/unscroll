@@ -83,16 +83,19 @@ kbd{font-size:12px;border:1px solid var(--line);border-radius:var(--r);padding:0
 #search-warning:empty{display:none}
 
 /* post list */
-.cards{display:block}
-.row{display:grid;grid-template-columns:24px 1fr;gap:12px;padding:16px 8px;border-bottom:1px solid var(--line)}
-.row:hover{background:rgb(255 255 255 / .6)}
-.row.selected .open-entry{box-shadow:inset 0 -.5em 0 var(--mark)}
-.select-post{width:16px;height:16px;margin:4px 0 0;accent-color:var(--ink);cursor:pointer}
-.row h3{font-size:19px;line-height:1.3;margin:0 0 6px}
+.cards{columns:3 290px;column-gap:16px}
+.note{position:relative;break-inside:avoid;margin:0 0 16px;padding:16px 16px 14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.note:hover{border-color:var(--ink)}
+.note.selected{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.note.selected .open-entry{box-shadow:inset 0 -.5em 0 var(--mark)}
+.select-post{position:absolute;top:16px;right:14px;width:16px;height:16px;margin:0;accent-color:var(--ink);cursor:pointer}
+.note h3{font-size:19px;line-height:1.3;margin:0 28px 10px 0}
 .open-entry{background:transparent;border:0;padding:0;text-align:left;font:inherit;color:inherit}
 .open-entry:hover{text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
-.row-point{margin:0 0 8px;font-size:14px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.row-meta{display:flex;flex-wrap:wrap;gap:2px 16px;font-size:13px;color:var(--ink)}
+.note-points{margin:0 0 12px;padding-left:18px;font-size:14px;color:var(--muted)}
+.note-points li{margin-bottom:6px}
+.note-text{margin:0 0 12px;font-size:14px;color:var(--muted)}
+.row-meta{display:flex;flex-wrap:wrap;gap:2px 14px;font-size:13px;color:var(--ink)}
 .row-meta .flag{color:var(--ink);font-weight:600}
 .row-meta .bad{color:var(--alert);font-weight:600}
 .error-text{font-size:13px;color:var(--alert);overflow-wrap:anywhere;margin:0 0 8px}
@@ -191,7 +194,6 @@ input[type=checkbox]{accent-color:var(--ink)}
   .empty-categories{display:none}
   main{margin:0;padding:20px 16px 120px}
   h1{font-size:26px}
-  .row{padding:14px 0}
   .selection-bar{left:50%;width:calc(100% - 24px);bottom:12px;flex-wrap:wrap;gap:10px}
   .selection-bar strong{margin-right:auto}
   .drawer{padding:32px 18px}
