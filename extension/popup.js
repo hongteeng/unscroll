@@ -21,9 +21,23 @@ function chooseCollectionInPage(){
   const cancel=e=>{if(e.key==='Escape')cleanup();};
   const pick=e=>{
     // Supported TikTok grids only. Never fall back to document/main/body.
-    const root=e.target.closest('[data-e2e="user-post-item-list"], [data-e2e="user-favorite-item-list"], [data-e2e="user-collection-item-list"]');
-    const tile=e.target.closest('[data-e2e="user-post-item"], [data-e2e="user-collection-item"], [data-e2e="user-favorite-item"]');
+    let root=e.target.closest('[data-e2e="user-post-item-list"], [data-e2e="user-favorite-item-list"], [data-e2e="user-collection-item-list"]');
+    let tile=e.target.closest('[data-e2e="user-post-item"], [data-e2e="user-collection-item"], [data-e2e="user-favorite-item"]');
     e.preventDefault();e.stopImmediatePropagation();
+    let generic=false;
+    if(!root||!tile||!root.contains(tile)){
+      // TikTok changes its grid markup often. Fall back to the post links themselves.
+      const LINK='a[href*="/video/"],a[href*="/photo/"]';
+      const link=e.target.closest(LINK)||e.target.closest('li,div')?.querySelector(LINK);
+      if(link){
+        let best=null;
+        for(let n=link.parentElement;n&&n!==document.body&&n!==document.documentElement;n=n.parentElement){
+          if(n.querySelector('h1,nav,header,[role="tablist"]'))break;
+          if(new Set([...n.querySelectorAll(LINK)].map(x=>x.pathname)).size>=3)best=n;
+        }
+        if(best){root=best;tile=link;generic=true;}
+      }
+    }
     if(!root||!tile||!root.contains(tile)){
       notice.textContent='Unscroll could not identify this video grid. Click a video tile in the open collection, or press Escape. No posts imported.';
       return;
@@ -39,7 +53,7 @@ function chooseCollectionInPage(){
     const headings=[...document.querySelectorAll('h1,h2,[role="tab"][aria-selected="true"]')].filter(n=>!root.contains(n)&&shown(n)).map(n=>n.textContent.trim());
     const markers=[];
     for(let p=root;p;p=p.parentElement)markers.push([p.id,p.getAttribute('data-collection-id'),p.getAttribute('aria-label')]);
-    globalThis.__unscrollScope={root,id:crypto.randomUUID(),page:location.href,identity:JSON.stringify([headings,markers])};
+    globalThis.__unscrollScope={root,generic,id:crypto.randomUUID(),page:location.href,identity:JSON.stringify([headings,markers])};
     cleanup();
     const done=document.createElement('div');
     done.textContent='Collection selected. Reopen Unscroll to review the count and import.';
@@ -84,7 +98,8 @@ async function captureInPage(action,collection,page,checkpoint){
   let anchorFound=false;
   if(action==='resume'){
     scroller.scrollTo(0,checkpoint.y||0);await wait();
-    const anchor=[...root.querySelectorAll('a[href]')].find(a=>visible(a)&&a.closest('[data-e2e="user-post-item"], [data-e2e="user-collection-item"], [data-e2e="user-favorite-item"]')?.closest('[data-e2e="user-post-item-list"], [data-e2e="user-favorite-item-list"], [data-e2e="user-collection-item-list"]')===root&&a.href.match(/\/(?:video|photo)\/(\d+)/)?.[1]===checkpoint.id);
+    const inGrid=a=>scope.generic||a.closest('[data-e2e="user-post-item"], [data-e2e="user-collection-item"], [data-e2e="user-favorite-item"]')?.closest('[data-e2e="user-post-item-list"], [data-e2e="user-favorite-item-list"], [data-e2e="user-collection-item-list"]')===root;
+    const anchor=[...root.querySelectorAll('a[href]')].find(a=>visible(a)&&inGrid(a)&&a.href.match(/\/(?:video|photo)\/(\d+)/)?.[1]===checkpoint.id);
     if(anchor){anchor.scrollIntoView();anchorFound=true;await wait();}
   }
   checkScope();
@@ -93,7 +108,8 @@ async function captureInPage(action,collection,page,checkpoint){
     try{const u=new URL(url,location.href);const m=u.pathname.match(/^\/@[^/]+\/(video|photo)\/(\d+)\/?$/);if(u.protocol==='https:'&&['www.tiktok.com','tiktok.com'].includes(u.hostname)&&!u.port&&m&&!posts.has(m[2]))posts.set(m[2],{url:u.origin+u.pathname,collections:collection?[collection]:[]});}catch{}
   };
   function scan(){
-    root.querySelectorAll('[data-e2e="user-post-item"], [data-e2e="user-collection-item"], [data-e2e="user-favorite-item"]').forEach(tile=>{
+    if(scope.generic)root.querySelectorAll('a[href]').forEach(a=>{if(visible(a))add(a.href);});
+    else root.querySelectorAll('[data-e2e="user-post-item"], [data-e2e="user-collection-item"], [data-e2e="user-favorite-item"]').forEach(tile=>{
       if(!visible(tile)||tile.closest('[data-e2e="user-post-item-list"], [data-e2e="user-favorite-item-list"], [data-e2e="user-collection-item-list"]')!==root)return;
       tile.querySelectorAll('a[href]').forEach(a=>{if(visible(a))add(a.href);});
     });
