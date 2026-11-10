@@ -144,8 +144,38 @@ def acquire(post,folder):
         raise ValueError('TikTok video capture failed. The post may require login, be unavailable, or need a newer yt-dlp. Attach a local copy or configure your own cookies file.') from None
 
 
+def thumb_path(post_id):
+    return db.home()/'thumbs'/f'{post_id}.jpg'
+
+
+def save_thumb(post_id,image_path):
+    from PIL import Image, ImageOps
+    out=thumb_path(post_id); out.parent.mkdir(parents=True,exist_ok=True)
+    with Image.open(image_path) as im:
+        im=ImageOps.exif_transpose(im).convert('RGB'); im.thumbnail((540,720)); im.save(out,'JPEG',quality=82)
+
+
+def thumb_from_files(post_id,files):
+    """Small cover image for the library card: first slide, or a frame from the video."""
+    images=[f for f in sorted(files) if f.suffix.lower() in ('.jpg','.jpeg','.png','.webp')]
+    if images: return save_thumb(post_id,images[0])
+    videos=[f for f in files if f.suffix.lower() in ('.mp4','.webm','.mkv','.mov','.m4v')]
+    if not videos: return
+    frame=videos[0].parent/'_thumb.jpg'
+    for at in ('1','0'):
+        try:
+            command(['ffmpeg','-nostdin','-v','error','-y','-ss',at,'-i',str(videos[0]),'-frames:v','1',str(frame)],120)
+            if frame.exists(): break
+        except ValueError: continue
+    if frame.exists():
+        try: save_thumb(post_id,frame)
+        finally: frame.unlink(missing_ok=True)
+
+
 def extract(post,folder):
     files,caption,details=acquire(post,folder)
+    try: thumb_from_files(post['id'],files)
+    except Exception: pass  # a missing cover never blocks extraction
     import pytesseract
     from PIL import Image, ImageOps
     segments=[]

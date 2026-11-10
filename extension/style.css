@@ -83,10 +83,13 @@ kbd{font-size:12px;border:1px solid var(--line);border-radius:var(--r);padding:0
 #search-warning:empty{display:none}
 
 /* post list */
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px;margin-top:16px}
 .note{position:relative;display:flex;flex-direction:column;min-width:0;padding:14px 14px 12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
 .note:hover{border-color:var(--ink)}
 .note.selected{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.note-thumb{display:block;width:calc(100% + 28px);margin:-14px -14px 12px;padding:0;aspect-ratio:5/4;border:0;border-radius:3px 3px 0 0;background:#dde1e6;overflow:hidden;cursor:pointer}
+.note-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.note.has-thumb .select-post{top:22px;right:22px;width:18px;height:18px;background:var(--surface);border-radius:2px}
 .select-post{position:absolute;top:14px;right:12px;width:16px;height:16px;margin:0;accent-color:var(--ink);cursor:pointer}
 .note h3{font-size:17px;line-height:1.3;margin:0 26px 6px 0;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .open-entry{background:transparent;border:0;padding:0;text-align:left;font:inherit;color:inherit}

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from . import db, ingest, search
+from . import db, ingest, media, search
 from .ai import Proposal
 from .worker import Worker
 from .security import check_request
@@ -278,6 +278,7 @@ def posts(q:str='',category:int=0,creator:str='',kind:str='',status:str='',after
     if q.strip(): rows,warning=search.rank(rows,q.strip())
     for p in rows:
         p['hook']=hook_of(p.get('source'))
+        p['thumb']=media.thumb_path(p['id']).exists()
         p.pop('source',None)
         p.pop('metadata',None)
         p['placements']=links.get(p['id'],[])
@@ -288,6 +289,7 @@ def posts(q:str='',category:int=0,creator:str='',kind:str='',status:str='',after
 def detail(ident:str):
     p=get_post(ident)
     p['hook']=hook_of(p.get('source'))
+    p['thumb']=media.thumb_path(p['id']).exists()
     p['overlap']=search.similar(ident)
     with db.connect() as c: p['placements']=[dict(r) for r in c.execute('SELECT * FROM placements WHERE post_id=?',(ident,))]
     return p
@@ -495,6 +497,14 @@ def export():
         p.get('metadata',{}).pop('local_files',None)
     return Response(json.dumps({'posts':posts,'categories':db.tree(),'placements':placements},ensure_ascii=False,indent=2),
         media_type='application/json',headers={'Content-Disposition':'attachment; filename="unscroll-library.json"'})
+
+
+@app.get('/thumb/{ident}')
+def thumb(ident:str):
+    if not ident.isdigit(): raise HTTPException(404)
+    path=media.thumb_path(ident)
+    if not path.is_file(): raise HTTPException(404)
+    return FileResponse(path,media_type='image/jpeg')
 
 
 app.mount('/static',StaticFiles(directory=ROOT/'static'),name='static')
