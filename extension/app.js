@@ -36,7 +36,7 @@ function renderChrome(){
   $('#setup-banner').innerHTML=banner;
   if($('#jobs-dialog').open)renderJobs();
 }
-function hookTitle(p){return p.hook||(p.status==='failed'?'Extraction failed':p.entry||p.status==='extracted'||p.status==='written'?'No spoken or on-screen text found':'Not processed yet');}
+function hookTitle(p){return p.entry?.title||p.hook||(p.status==='failed'?'Extraction failed':p.entry||p.status==='extracted'||p.status==='written'?'No spoken or on-screen text found':'Not processed yet');}
 function renderCards(){
   const n=state.posts.length;$('#result-count').textContent=n+(n===1?' post':' posts');
   $('#cards').innerHTML=n?state.posts.map(p=>{

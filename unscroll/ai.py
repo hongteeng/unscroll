@@ -120,8 +120,25 @@ def verify(entry,source):
     return entry.model_dump()
 
 
+TITLE_RULE=('The title must make sense on its own to someone who has not seen the video: a plain headline, 6 to 14 words, '
+            'stating the takeaway or topic (what the viewer learns or what the video is about). Sentence case. '
+            'No creator name or handle, no hashtags, no emoji, no "video", "post" or "carousel", no clickbait, '
+            'no part numbers, and do not copy the opening line unless it already says the takeaway.')
+
+
+class Retitle(BaseModel):
+    title: str = Field(min_length=1,max_length=120)
+
+
+def retitle(entry):
+    keep={k:entry[k] for k in ('title','key_points','action_steps','specifics','topics') if k in entry}
+    result=ask('title','Write one new title for this entry from its content only. '+TITLE_RULE,keep,Retitle)
+    return result.title.strip().strip('"').rstrip('.')
+
+
 def write(source):
     result=ask('entry', '''Write ONE faithful entry for this post, using only its caption and extracted segments.
+'''+TITLE_RULE+'''
 Use 3–7 key points when the source supports them. When it does not, use fewer (even zero), set thin=true and explain.
 Each point and action must include an exact quote from caption or segment text as evidence. Quote substrings verbatim;
 never repair uncertain names or numbers. Specifics must be exact source substrings: names, tools, books, numbers, frameworks.
