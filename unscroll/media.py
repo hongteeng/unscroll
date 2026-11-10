@@ -63,8 +63,30 @@ def fetch_image(url,path):
     raise ValueError('Too many slide redirects.')
 
 
+def _slides_via_ytdlp(post):
+    """TikTok serves photo posts only after a JS challenge. yt-dlp already solves it, so reuse its page fetch.
+    Uses a private yt-dlp method, so any failure falls back to the plain page request."""
+    try:
+        from yt_dlp import YoutubeDL
+        vid=post['id']
+        url=f"https://www.tiktok.com/@{post.get('creator') or '_'}/video/{vid}"
+        with YoutubeDL({'quiet':True,'no_warnings':True}) as y:
+            data,_status=y.get_info_extractor('TikTok')._extract_web_data_and_status(url,vid,fatal=False)
+        slides=[]
+        for image in ((data or {}).get('imagePost') or {}).get('images',[]):
+            ref=image.get('imageURL') or {}
+            urls=ref.get('urlList') or ref.get('url_list') or []
+            if urls: slides.append(urls[0])
+        if slides and len(slides)<=100: return slides,(data.get('desc') or post['caption'])
+    except Exception:
+        pass
+    return None
+
+
 def carousel_details(post):
     import httpx
+    found_slides=_slides_via_ytdlp(post)
+    if found_slides: return found_slides[0],found_slides[1],True
     # Prefer first-party page hydration data, where all slides have an explicit order.
     r=httpx.get(post['url'],timeout=40,headers={'User-Agent':'Mozilla/5.0'},follow_redirects=False)
     if r.status_code!=200: raise ValueError('TikTok did not expose this carousel. Use the extension on the open post, or attach ordered slide files.')
