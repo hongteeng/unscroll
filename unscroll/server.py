@@ -1,3 +1,4 @@
+import re
 import json
 import os
 import secrets
@@ -205,14 +206,55 @@ def state():
             'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture')}
 
 
+_SMALL={'a','i','to','in','of','it','is','me','my','we','up','on','at','or','if','so','no','do','go','be','an','as','by','he','us','you','how','the','and','for','are','not','but'}
+
+
+def _words(text):
+    return re.findall(r"[a-z']+",text.lower())
+
+
+def _sounds_like_music(speech):
+    """Whisper turns songs into looping nonsense, so heavy word repetition means it is not a spoken hook."""
+    w=[x for s in speech[:3] for x in _words(s['text'])]
+    return len(w)>=12 and len(set(w))/len(w)<0.6
+
+
+def _clean_word(tok):
+    if re.fullmatch(r"[$]?\d[\d,.]*[%kKmM]?[.,!?]?",tok): return True
+    bare=tok.rstrip('.,!?:;')
+    if bare.isupper() and len(bare)>1: return False
+    if not re.fullmatch(r"[A-Za-z][A-Za-z'’]*",bare): return False
+    return len(bare)>=3 or bare.lower() in _SMALL
+
+
+def _readable_run(text):
+    """Longest run of OCR tokens that read as words, trimmed to start at a capital or number."""
+    best,cur=[],[]
+    for tok in text.split()+[None]:
+        if tok is not None and _clean_word(tok):
+            cur.append(tok); continue
+        while cur and not (cur[0][0].isupper() or cur[0][0].isdigit() or cur[0][0]=='$'): cur.pop(0)
+        if len(cur)>len(best): best=cur
+        cur=[]
+    return ' '.join(best)
+
+
+def _shorten(text):
+    text=' '.join(text.split())
+    return text if len(text)<=140 else text[:140].rsplit(' ',1)[0]+'…'
+
+
 def hook_of(source):
-    """Opening hook of a post: first spoken line, else first on-screen or slide text. Never the caption."""
+    """Opening hook of a post. Spoken first line; if there is no speech, or it is background music,
+    the clearest on-screen or slide text. Never the caption."""
     segs=[x for x in (source or {}).get('segments') or [] if (x.get('text') or '').strip()]
-    pick=next((x for x in segs if x['label'].startswith('Speech')),None) or (segs[0] if segs else None)
-    if not pick: return ''
-    text=' '.join(pick['text'].split())
-    if len(text)>140: text=text[:140].rsplit(' ',1)[0]+'…'
-    return text
+    speech=[x for x in segs if x['label'].startswith('Speech')]
+    visual=[x for x in segs if not x['label'].startswith('Speech')][:4]
+    if speech and not (_sounds_like_music(speech) and visual): return _shorten(speech[0]['text'])
+    if not visual: return ''
+    runs=[_readable_run(x['text']) for x in visual]
+    best=max(runs,key=lambda r:len(r.split()))
+    return _shorten(best if len(best.split())>=3 else visual[0]['text'])
 
 
 @app.get('/api/posts')
