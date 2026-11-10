@@ -203,7 +203,7 @@ def state():
         creators=[r[0] for r in c.execute("SELECT DISTINCT creator FROM posts WHERE creator!='' ORDER BY creator")]
     return {'counts':counts,'job_counts':job_counts,'jobs':jobs,'paused':db.setting('paused',True),
             'tree':db.tree(),'proposal':db.setting('proposal'),'usage':usage,'creators':creators,
-            'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture')}
+            'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture'),'guidance':db.setting('category_guidance','')}
 
 
 _SMALL={'a','i','to','in','of','it','is','me','my','we','up','on','at','or','if','so','no','do','go','be','an','as','by','he','us','you','how','the','and','for','are','not','but'}
@@ -339,7 +339,7 @@ def review(ident:str):
 @app.post('/api/posts/{ident}/move')
 def move(ident:str,body:MoveRequest):
     idle(); get_post(ident)
-    valid={s['id'] for r in db.tree() for s in r['children']}
+    valid={s['id'] for r in db.tree() for s in r['children']}|{r['id'] for r in db.tree() if not r['children']}
     ids=list(dict.fromkeys([body.primary_id]+body.extra_ids))
     if any(i not in valid for i in ids): raise ValueError('Choose a subcategory from the approved tree.')
     with db.connect() as c:
@@ -378,8 +378,13 @@ def local_media(ident:str,files:list[UploadFile]=File(...)):
     return {'message':f'{len(paths)} file(s) attached in the order selected. Click Process to extract them.'}
 
 
+class Guidance(BaseModel):
+    guidance:str=Field(default='',max_length=2000)
+
+
 @app.post('/api/categories/propose')
-def propose():
+def propose(body:Guidance=Guidance()):
+    db.put_setting('category_guidance',body.guidance.strip())
     db.enqueue('propose'); db.put_setting('paused',False)
     return {'message':'Category proposal queued. Review it before approval.'}
 
@@ -391,7 +396,7 @@ def approve(body:Proposal):
     parent_names=set()
     for r in body.categories:
         r.name=r.name.strip()
-        r.subcategories=[s.strip() for s in r.subcategories]
+        r.subcategories=[s.strip() for s in r.subcategories if s.strip()]
         if not r.name or r.name.casefold() in parent_names: raise ValueError('Category names must be unique and nonempty.')
         parent_names.add(r.name.casefold())
         if any(not s or len(s)>80 for s in r.subcategories) or len({s.casefold() for s in r.subcategories})!=len(r.subcategories):

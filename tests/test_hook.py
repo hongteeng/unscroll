@@ -37,3 +37,10 @@ class Hook(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+
+class ZeroSubcategoryTests(unittest.TestCase):
+    def test_proposal_allows_a_category_with_no_subcategories(self):
+        from unscroll.ai import Proposal
+        p=Proposal(categories=[{'name':'Entrepreneurship','subcategories':[]}])
+        self.assertEqual(p.categories[0].subcategories,[])

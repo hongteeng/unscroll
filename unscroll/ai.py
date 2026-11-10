@@ -27,11 +27,11 @@ class Entry(BaseModel):
 
 class Branch(BaseModel):
     name: str = Field(min_length=1,max_length=80)
-    subcategories: list[str] = Field(min_length=1,max_length=6)
+    subcategories: list[str] = Field(max_length=30)
 
 
 class Proposal(BaseModel):
-    categories: list[Branch] = Field(min_length=1,max_length=8)
+    categories: list[Branch] = Field(min_length=1,max_length=40)
 
 
 class Placement(BaseModel):
@@ -138,20 +138,25 @@ def propose():
         entries=[{'id':r['id'],'title':json.loads(r['entry'])['title'],'topics':json.loads(r['entry'])['topics']}
                  for r in c.execute('SELECT id,entry FROM posts WHERE entry IS NOT NULL')]
     if not entries: raise ValueError('Process some posts before suggesting categories.')
-    result=ask('categories','Propose a two-level category tree from ALL supplied entry titles and topics, as a person would shelve their own saved videos. '
-               'Think in broad life areas such as Entrepreneurship, Health and fitness, Cooking, Money, Learning, Creative work. '
-               'Use 3 to 7 top-level categories, each with at most 4 subcategories, and only make a subcategory when at least 3 entries belong in it. '
-               'Prefer a single broad category over several narrow slices of the same theme, even when most entries share that theme. '
-               'Use plain names, avoid near duplicates, and include a sensible home for unusual material. '
-               'Never write or merge entries. The user will review the proposal before approval.',entries,Proposal)
+    guidance=db.setting('category_guidance','') or ''
+    result=ask('categories','Propose a category tree for these saved videos, as a person would shelve their own saves. '
+               'Categories are broad areas of someone\'s life or interests. A category may have zero subcategories, '
+               'and that is the right choice whenever splitting it would only create thin slices. '
+               'The user\'s instructions below are training: follow them exactly and over any default of yours, '
+               'including how many categories, which names to use, and whether to have subcategories at all. '
+               'Never write or merge entries. The user will review the proposal before approval.\n\n'
+               'User instructions: '+(guidance.strip() or '(none given)'),entries,Proposal)
     db.put_setting('proposal',result.model_dump()['categories'])
 
 
 def place(post):
     leaves=[{'id':s['id'],'category':r['name'],'subcategory':s['name']} for r in db.tree() for s in r['children']]
+    leaves+=[{'id':r['id'],'category':r['name'],'subcategory':''} for r in db.tree() if not r['children']]
     if not leaves: return
-    result=ask('placement','Assign this entry to exactly one primary subcategory from the supplied IDs, '
-               'and any genuinely useful extra subcategories. Use only listed leaf IDs. Never rewrite the entry.',
+    rule=(db.setting('category_guidance','') or '').strip()
+    result=ask('placement','Assign this entry to exactly one primary place from the supplied IDs; a category with no subcategory is a place itself. '
+               'Add extra places only when genuinely useful. Use only listed IDs. Never rewrite the entry.'
+               +(' Follow the user\'s standing instructions over your own judgment: '+rule if rule else ''),
                {'entry':post['entry'],'subcategories':leaves},Placement)
     valid={s['id'] for s in leaves}
     ids=[result.primary_id]+result.extra_ids
