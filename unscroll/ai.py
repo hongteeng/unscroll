@@ -51,6 +51,7 @@ def ask(purpose, system, data, schema):
         'tools':[{'name':'record','description':'Return the requested structured result.', 'input_schema':schema.model_json_schema()}],
         'tool_choice':{'type':'tool','name':'record'},
         'messages':[{'role':'user','content':encoded}]}
+    problem=''
     for attempt in range(2):
         for connection_attempt in range(2):
             try:
@@ -77,10 +78,10 @@ def ask(purpose, system, data, schema):
         if tool:
             try:
                 return schema.model_validate(tool.get('input'))
-            except ValidationError:
-                pass
-        request['system']+=' The previous result did not match the schema. Generate a fresh record using exactly the declared fields, without extras such as label. Use only the supplied source.'
-    raise ValueError('Claude returned an invalid structured response twice. No invalid entry was saved. Retry this post; extracted source text is kept.')
+            except ValidationError as e:
+                problem='; '.join(f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()[:4])
+        request['system']+=' The previous result did not match the schema. Generate a fresh record using exactly the declared fields, without extras such as label. Use only the supplied source. Fix these problems: '+(problem or 'no record was returned')+'.'
+    raise ValueError('Claude returned an invalid structured response twice ('+(problem or 'no record returned')+'). No invalid entry was saved. Retry this post; extracted source text is kept.')
 
 
 def source_text(source):
@@ -107,6 +108,7 @@ Use 3–7 key points when the source supports them. When it does not, use fewer 
 Each point and action must include an exact quote from caption or segment text as evidence. Quote substrings verbatim;
 never repair uncertain names or numbers. Specifics must be exact source substrings: names, tools, books, numbers, frameworks.
 Actions only when explicitly stated. Do not compare to other posts. Keep distinct ideas and all important details.
+Hard limits: at most 7 key points, 12 actions, 40 specifics and 12 topics. When the source has more, keep the most important.
 Text may be incomplete or transcription/OCR may be wrong: describe uncertainty; do not fill gaps.
 Recommend downloading only when substantive, actionable material merits offline reference. This is not a quality certification.
 If extraction warnings mention missing slides or sparse frames, retain that limitation in uncertainty.''',source,Entry)
