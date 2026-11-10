@@ -203,7 +203,7 @@ def state():
         creators=[r[0] for r in c.execute("SELECT DISTINCT creator FROM posts WHERE creator!='' ORDER BY creator")]
     return {'counts':counts,'job_counts':job_counts,'jobs':jobs,'paused':db.setting('paused',True),
             'tree':db.tree(),'proposal':db.setting('proposal'),'usage':usage,'creators':creators,
-            'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture'),'guidance':db.setting('category_guidance','')}
+            'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture'),'guidance':db.setting('category_guidance',''),'refinement':db.setting('refinement') or []}
 
 
 _SMALL={'a','i','to','in','of','it','is','me','my','we','up','on','at','or','if','so','no','do','go','be','an','as','by','he','us','you','how','the','and','for','are','not','but'}
@@ -389,6 +389,49 @@ def propose(body:Guidance=Guidance()):
     db.put_setting('category_guidance',body.guidance.strip())
     db.enqueue('propose'); db.put_setting('paused',False)
     return {'message':'Category proposal queued. Review it before approval.'}
+
+
+@app.post('/api/categories/refine')
+def refine_cats(body:Guidance=Guidance()):
+    if not db.tree(): raise ValueError('Approve a category tree first.')
+    if body.guidance.strip(): db.put_setting('category_guidance',body.guidance.strip())
+    db.put_setting('refinement',None)
+    db.enqueue('refine'); db.put_setting('paused',False)
+    return {'message':'Reviewing how your saves are filed. Suggested changes will appear in Categories.'}
+
+
+class ApplyMove(BaseModel):
+    index:int
+
+
+@app.post('/api/categories/refinement/apply')
+def apply_move(body:ApplyMove):
+    idle()
+    moves=db.setting('refinement') or []
+    if not 0<=body.index<len(moves): raise ValueError('That suggestion is no longer available.')
+    m=moves[body.index]
+    with db.connect() as c:
+        row=c.execute('SELECT id FROM categories WHERE parent_id IS NULL AND name=? COLLATE NOCASE',(m['name'],)).fetchone()
+        if row:
+            if c.execute('SELECT 1 FROM categories WHERE parent_id=?',(row['id'],)).fetchone():
+                raise ValueError(f"{m['name']} already has subcategories. Rename the suggestion in Categories first.")
+            cat=row['id']
+        else: cat=c.execute('INSERT INTO categories(name) VALUES(?)',(m['name'],)).lastrowid
+        for pid in m['entry_ids']:
+            if not c.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): continue
+            c.execute('DELETE FROM placements WHERE post_id=?',(pid,))
+            c.execute('INSERT INTO placements VALUES(?,?,1)',(pid,cat,))
+            c.execute("UPDATE posts SET status='categorised' WHERE id=?",(pid,))
+    del moves[body.index]; db.put_setting('refinement',moves)
+    return {'message':f"Moved {len(m['entry_ids'])} save(s) to {m['name']}."}
+
+
+@app.post('/api/categories/refinement/dismiss')
+def dismiss_move(body:ApplyMove):
+    moves=db.setting('refinement') or []
+    if 0<=body.index<len(moves): del moves[body.index]
+    db.put_setting('refinement',moves)
+    return {'message':'Suggestion dismissed.'}
 
 
 @app.post('/api/categories/approve')

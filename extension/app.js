@@ -32,6 +32,7 @@ function renderChrome(){
   const missing=Object.entries(state.session.tools||{}).filter(([,ok])=>!ok).map(([name])=>name);
   let banner='';
   if(!state.session.api_ready||missing.length)banner=`<div class="banner">Finish local setup to process posts: ${!state.session.api_ready?'Claude API key needed. ':''}${missing.length?esc(missing.join(', '))+' not installed. ':''} Run Setup.command from the Unscroll folder.<button class="text-btn" data-settings>View settings</button></div>`;
+  else if(d.refinement?.length&&d.tree.length)banner=`<div class="banner">${d.refinement.length} suggested change${d.refinement.length===1?'':'s'} to how your saves are filed.<button class="text-btn" data-review-cats>Review</button></div>`;
   else if(d.proposal&&!d.tree.length)banner='<div class="banner">Your category proposal is ready. Make it yours before anything is filed.<button class="text-btn" data-review-cats>Review categories</button></div>';
   $('#setup-banner').innerHTML=banner;
   if($('#jobs-dialog').open)renderJobs();
@@ -83,7 +84,8 @@ function renderManage(){
   $('#category-description').textContent='Rename or merge categories while preserving your entries and their placements. Pause processing and wait for the current job before changing the tree.';
   const all=state.data.tree.flatMap(r=>[r,...r.children]);
   const row=r=>`<div class="manage-line"><input type="text" value="${esc(r.name)}" data-rename-value="${r.id}" aria-label="Rename ${esc(r.name)}" maxlength="80"><button class="text-btn" data-rename="${r.id}">Rename</button><select data-merge-target="${r.id}" aria-label="Merge target"><option value="">Merge into…</option>${all.filter(t=>t.id!==r.id&&(t.parent_id===null)===(r.parent_id===null)).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select><button class="text-btn" data-merge="${r.id}">Merge</button></div>`;
-  $('#category-editor').innerHTML=state.data.tree.map(r=>`<div class="category-group">${row(r)}${r.children.map(s=>row(s)).join('')}</div>`).join('');
+  const sugg=(state.data.refinement||[]).map((m,i)=>{const names=m.entry_ids.map(id=>state.posts.find(p=>p.id===id)?.entry?.title).filter(Boolean).slice(0,4);return `<div class="suggestion"><strong>Move ${m.entry_ids.length} save${m.entry_ids.length===1?'':'s'} to “${esc(m.name)}”</strong><p>${esc(m.reason)}</p>${names.length?`<ul>${names.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}<button class="button primary" data-apply-move="${i}">Move them</button><button class="text-btn" data-dismiss-move="${i}">Dismiss</button></div>`;}).join('');
+  $('#category-editor').innerHTML=sugg+state.data.tree.map(r=>`<div class="category-group">${row(r)}${r.children.map(s=>row(s)).join('')}</div>`).join('');
   $('#category-actions').innerHTML='<button class="button subtle" data-unplaced>View entries awaiting placement</button>';
 }
 function renderJobs(){
@@ -126,7 +128,8 @@ document.addEventListener('click',event=>action(async()=>{
   if(b.id==='download-selected'){const r=await api('download',{ids:[...state.selected]});toast(`${r.queued} selected downloads queued.`);return refresh();}
   if(b.id==='pause'||b.id==='resume'){toast((await api(b.id,{})).message);return refresh();}
   if(b.id==='suggest-cats'){
-    if(state.data.tree.length||state.data.proposal)return openCategories();
+    if(state.data.proposal&&!state.data.tree.length)return openCategories();
+    if(state.data.tree.length){if(!state.data.counts.ready)return toast('Process a few posts first.');toast((await api('categories/refine',{})).message);await refresh();renderJobs();return show('#jobs-dialog');}
     if(!state.data.counts.ready)return toast('Process a few posts first so categories reflect your actual ideas.');
     const g=prompt('Tell Claude how to organise your saves (optional). Example: put everything in Entrepreneurship, no subcategories.',state.data.guidance||'');if(g===null)return;toast((await api('categories/propose',{guidance:g})).message);await refresh();renderJobs();return show('#jobs-dialog');
   }
@@ -143,6 +146,8 @@ document.addEventListener('click',event=>action(async()=>{
   if(b.dataset.removeChild){const [i,j]=b.dataset.removeChild.split(':').map(Number);state.draft[i].subcategories.splice(j,1);return renderDraft();}
   if(b.hasAttribute('data-draft-merge')){const i=Number(b.dataset.draftMerge),val=$(`[data-draft-merge-target="${i}"]`).value;if(val==='')return toast('Choose a category to combine into.');const target=state.draft[Number(val)];target.subcategories=[...new Set([...target.subcategories,...state.draft[i].subcategories])];state.draft.splice(i,1);return renderDraft();}
   if(b.id==='regen-tree'){const g=prompt('How should Claude organise your saves? Example: one category, Entrepreneurship, no subcategories.',state.data.guidance||'');if(g===null)return;toast((await api('categories/propose',{guidance:g})).message);$('#category-dialog').close();await refresh();renderJobs();return show('#jobs-dialog');}
+  if(b.hasAttribute('data-apply-move')){toast((await api('categories/refinement/apply',{index:Number(b.dataset.applyMove)})).message);await refresh();return renderManage();}
+  if(b.hasAttribute('data-dismiss-move')){await api('categories/refinement/dismiss',{index:Number(b.dataset.dismissMove)});await refresh();return renderManage();}
   if(b.id==='approve-tree'){toast((await api('categories/approve',{categories:state.draft})).message);$('#category-dialog').close();return refresh();}
   if(b.dataset.rename){toast((await api(`categories/${b.dataset.rename}/rename`,{name:$(`[data-rename-value="${b.dataset.rename}"]`).value})).message);await refresh();return renderManage();}
   if(b.dataset.merge){const id=Number($(`[data-merge-target="${b.dataset.merge}"]`).value);if(!id)return toast('Choose a merge target.');toast((await api(`categories/${b.dataset.merge}/merge`,{target_id:id})).message);await refresh();return renderManage();}

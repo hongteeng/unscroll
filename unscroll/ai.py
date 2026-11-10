@@ -166,6 +166,44 @@ def propose():
     db.put_setting('proposal',result.model_dump()['categories'])
 
 
+class Move(BaseModel):
+    model_config=ConfigDict(extra='ignore')
+    name: str = Field(min_length=1,max_length=80)
+    entry_ids: list[str] = Field(min_length=1,max_length=200)
+    reason: str = Field(max_length=300)
+
+
+class Refinement(BaseModel):
+    model_config=ConfigDict(extra='ignore')
+    moves: list[Move] = Field(max_length=12)
+
+
+def refine():
+    """Review how saves are filed today and suggest moving clearly misfiled ones into new categories."""
+    tree=db.tree()
+    if not tree: raise ValueError('Approve a category tree first.')
+    with db.connect() as c:
+        names={r['id']:r['name'] for r in c.execute('SELECT id,name FROM categories')}
+        primary={r['post_id']:r['category_id'] for r in c.execute('SELECT * FROM placements WHERE is_primary=1')}
+        rows=[(r['id'],json.loads(r['entry'])) for r in c.execute('SELECT id,entry FROM posts WHERE entry IS NOT NULL')]
+    entries=[{'id':str(i),'title':e['title'],'topics':e['topics'],'key_points':[k['text'] for k in e['key_points'][:2]],
+              'filed_under':names.get(primary.get(i),'(not filed)')} for i,e in rows]
+    guidance=(db.setting('category_guidance','') or '').strip()
+    result=ask('refine','Review how these saved videos are filed. Find entries whose real subject does NOT belong with the other entries in the category they are filed under, '
+               'judging by their title, topics and key points, not by the category name. For each group of such entries, propose ONE new broad category a person would use '
+               '(for example Communication for speaking and presentation skills) and list their ids. Only suggest a move when the mismatch is clear; '
+               'A save that is a tool, tactic, tutorial or case study serving the category\'s goal still belongs there: only move saves whose subject is a different area of life or skill. '
+               'Propose a new category only for at least 2 entries, unless a single entry is clearly alien. Leave well-filed entries alone, and return no moves if everything fits. Prefer few, broad category names. Never rewrite entries. '
+               'Existing categories: '+', '.join(r['name'] for r in tree)+'. You may reuse an existing category name only if it has no subcategories. '
+               +('The user\'s standing instructions: '+guidance if guidance else ''),entries,Refinement)
+    valid={str(i) for i,_ in rows}
+    moves=[]
+    for m in result.moves:
+        ids=[i for i in dict.fromkeys(m.entry_ids) if i in valid]
+        if ids: moves.append({'name':m.name.strip(),'entry_ids':ids,'reason':m.reason.strip()})
+    db.put_setting('refinement',moves)
+
+
 def place(post):
     leaves=[{'id':s['id'],'category':r['name'],'subcategory':s['name']} for r in db.tree() for s in r['children']]
     leaves+=[{'id':r['id'],'category':r['name'],'subcategory':''} for r in db.tree() if not r['children']]
