@@ -205,6 +205,16 @@ def state():
             'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture')}
 
 
+def hook_of(source):
+    """Opening hook of a post: first spoken line, else first on-screen or slide text. Never the caption."""
+    segs=[x for x in (source or {}).get('segments') or [] if (x.get('text') or '').strip()]
+    pick=next((x for x in segs if x['label'].startswith('Speech')),None) or (segs[0] if segs else None)
+    if not pick: return ''
+    text=' '.join(pick['text'].split())
+    if len(text)>140: text=text[:140].rsplit(' ',1)[0]+'…'
+    return text
+
+
 @app.get('/api/posts')
 def posts(q:str='',category:int=0,creator:str='',kind:str='',status:str='',after:str='',before:str=''):
     with db.connect() as c:
@@ -225,6 +235,7 @@ def posts(q:str='',category:int=0,creator:str='',kind:str='',status:str='',after
     warning=''
     if q.strip(): rows,warning=search.rank(rows,q.strip())
     for p in rows:
+        p['hook']=hook_of(p.get('source'))
         p.pop('source',None)
         p.pop('metadata',None)
         p['placements']=links.get(p['id'],[])
@@ -234,6 +245,7 @@ def posts(q:str='',category:int=0,creator:str='',kind:str='',status:str='',after
 @app.get('/api/posts/{ident}')
 def detail(ident:str):
     p=get_post(ident)
+    p['hook']=hook_of(p.get('source'))
     p['overlap']=search.similar(ident)
     with db.connect() as c: p['placements']=[dict(r) for r in c.execute('SELECT * FROM placements WHERE post_id=?',(ident,))]
     return p
