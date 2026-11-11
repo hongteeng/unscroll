@@ -29,27 +29,22 @@ class CollectionAndChat(unittest.TestCase):
         self.assertEqual(len(db.tree()),1); self.assertEqual(db.tree()[0]['count'],2)
     def test_no_collection_means_no_default(self):
         self.assertEqual(ai.collection_name(self.add(14)),'')
-    def test_chat_proposal_applies_only_after_approval(self):
+    def test_chat_only_talks_planning_needs_a_button_and_apply_is_the_approval(self):
         from unscroll.server import app
         self.add(15); self.add(16)
         entry={'title':'T','key_points':[],'topics':[]}
         for i in ('15','16'): db.update(i,entry=entry,status='written')
-        reply=ai.ChatResult(reply='Moving both.',changes=[ai.Change(kind='move',name='Communication',entry_ids=['15','16'])])
-        with patch.object(ai,'ask',return_value=reply):
-            client=TestClient(app,base_url='http://127.0.0.1:8765')
-            token=client.get('/api/session').json()['token']; h={'X-Unscroll-Token':token}
-            view=client.post('/api/categories/chat',json={'message':'put these in Communication'},headers=h).json()
-        self.assertEqual(db.tree(),[])
-        self.assertIn('Communication',view['pending'][0]['label'])
-        # The chat reply itself lists every video and the category name.
-        listing=view['history'][-1]['text']
-        self.assertIn('Communication',listing); self.assertIn('Nothing has changed yet',listing)
-        self.assertEqual(view['pending'][0]['new_category'],'Communication')
-        # A vague "ok build now" is just another chat turn: still nothing changes.
-        with patch.object(ai,'ask',return_value=ai.ChatResult(reply='Building.',changes=[ai.Change(kind='move',name='Communication',entry_ids=['15','16'])])):
-            client.post('/api/categories/chat',json={'message':'ok build now'},headers=h)
-        self.assertEqual(db.tree(),[])
-        # Only the Apply button (the user's approval of the plan) changes anything, and it applies the whole plan.
+        client=TestClient(app,base_url='http://127.0.0.1:8765')
+        h={'X-Unscroll-Token':client.get('/api/session').json()['token']}
+        with patch.object(ai,'converse',return_value='I would use a Communication category.'):
+            view=client.post('/api/categories/chat',json={'message':'ok build now'},headers=h).json()
+        self.assertEqual(db.tree(),[]); self.assertEqual(view['pending'],[])
+        answers=[ai.Blueprint(categories=['Communication']),ai.Assignments(items=[ai.Assigned(id='15',category='Communication'),ai.Assigned(id='16',category='Communication')])]
+        with patch.object(ai,'ask',side_effect=answers):
+            view=client.post('/api/categories/chat/plan',json={},headers=h).json()
+        self.assertEqual(db.tree(),[])   # a plan is not a change
+        self.assertEqual(view['pending'][0]['new_category'],'Communication'); self.assertEqual(len(view['pending'][0]['items']),2)
+        self.assertIn('Nothing has changed yet',view['history'][-1]['text'])
         client.post('/api/categories/chat/apply',json={},headers=h)
         self.assertEqual(db.tree()[0]['name'],'Communication'); self.assertEqual(db.tree()[0]['count'],2)
 

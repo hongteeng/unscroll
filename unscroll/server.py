@@ -475,13 +475,19 @@ class ChatMessage(BaseModel):
 def chat_turn(body:ChatMessage):
     from . import ai
     ai.chat(body.message.strip())
+    return chat_view()
+
+
+@app.post('/api/categories/chat/plan')
+def chat_plan():
+    """Build the concrete list of moves from the conversation. Applies nothing."""
+    from . import ai
+    changes=ai.build_plan()
+    history=db.setting('chat_history',[]) or []
     view=chat_view()
-    if view['pending']:
-        history=db.setting('chat_history',[]) or []
-        history.append({'role':'assistant','text':_proposal_text(view)})
-        db.put_setting('chat_history',history[-30:])
-        view=chat_view()
-    return view
+    history.append({'role':'assistant','text':_proposal_text(view) if changes else 'I could not find any moves to propose from that conversation. Tell me more about what you want, then build the plan again.'})
+    db.put_setting('chat_history',history[-30:])
+    return chat_view()
 
 
 @app.post('/api/categories/chat/discard')
