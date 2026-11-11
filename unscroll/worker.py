@@ -33,10 +33,12 @@ class Worker:
                 if job['kind']=='process':
                     if not p['source']:
                         stage='extracting media (TikTok fetch, speech recognition or OCR)'
+                        media.guard_fetch(p)
                         folder=db.home()/'tmp'/p['id']
                         try: media.extract(p,folder)
                         finally: media.cleanup(p,folder)
                         p=db.post(p['id'])
+                        if (p['metadata'] or {}).get('fetch_blocked'): db.update(p['id'],metadata={k:v for k,v in p['metadata'].items() if k!='fetch_blocked'})
                     if not p['entry']:
                         stage='writing the entry with Claude'
                         entry=ai.write(p['source'])
@@ -70,6 +72,9 @@ class Worker:
                 else:
                     message=str(e) if isinstance(e,ValueError) else f'{type(e).__name__} while {stage}. Retry this post or check the local dependencies.'
                 with db.connect() as c: c.execute("UPDATE jobs SET state='failed',error=? WHERE id=?",(message,job['id']))
+                if isinstance(e,media.FetchError) and p:
+                    # Remember why, so the next attempt can skip a request that cannot succeed.
+                    db.update(p['id'],metadata={**(p['metadata'] or {}),'fetch_blocked':e.code})
                 if job['post_id']:
                     if job['kind']=='download': db.update(job['post_id'],download_error=message)
                     else: db.update(job['post_id'],status='failed',error=message)

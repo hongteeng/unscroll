@@ -116,6 +116,35 @@ def carousel_details(post):
     raise ValueError('All carousel slides could not be verified. Open the photo post and recapture it, or attach the complete ordered slide set.')
 
 
+FETCH_MESSAGES={
+    'login':'TikTok only shows this video to logged-in viewers (it is marked as sensitive). Attach a copy of the video under Attach media on the post, or set UNSCROLL_COOKIES_FILE to your own exported cookies and process it again.',
+    'unavailable':'TikTok says this video is unavailable. It may have been deleted or made private. Attach a copy of the video if you have one.',
+    'rate_limited':'TikTok is limiting requests right now. Wait a few minutes, then process it again.',
+    'other':'TikTok video capture failed for a reason Unscroll does not recognise. It may need a newer yt-dlp. Attach a local copy of the video, or try again later.'}
+
+
+class FetchError(ValueError):
+    """A failed TikTok fetch with a cause the UI can explain. `code` says whether trying again can help."""
+    def __init__(self,code):
+        self.code=code if code in FETCH_MESSAGES else 'other'
+        super().__init__(FETCH_MESSAGES[self.code])
+
+
+def classify_fetch_error(text):
+    t=(text or '').lower()
+    if 'log in' in t or 'login' in t or 'comfortable for some audiences' in t or 'sign in' in t: return 'login'
+    if any(x in t for x in ('429','too many requests','rate limit','rate-limit')): return 'rate_limited'
+    if any(x in t for x in ('unavailable','removed','deleted','private','not found','404','does not exist')): return 'unavailable'
+    return 'other'
+
+
+def guard_fetch(post):
+    """Skip a request that is certain to fail: a login-gated post with no cookies and no attached copy."""
+    meta=post.get('metadata') or {}
+    if meta.get('fetch_blocked')=='login' and not meta.get('local_files') and not os.environ.get('UNSCROLL_COOKIES_FILE'):
+        raise FetchError('login')
+
+
 def acquire(post,folder):
     folder.mkdir(parents=True,exist_ok=True)
     local=(post['metadata'] or {}).get('local_files',[])
@@ -141,7 +170,7 @@ def acquire(post,folder):
             'creator':info.get('uploader') or post['creator'],'posted_date':info.get('upload_date') or post['posted_date']}
     except Exception as e:
         if isinstance(e,ValueError): raise
-        raise ValueError('TikTok video capture failed. The post may require login, be unavailable, or need a newer yt-dlp. Attach a local copy or configure your own cookies file.') from None
+        raise FetchError(classify_fetch_error(str(e))) from e
 
 
 def thumb_path(post_id):
