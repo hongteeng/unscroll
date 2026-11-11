@@ -58,7 +58,7 @@ async function loadPosts(){
   const params=new URLSearchParams({q:$('#search').value,category:state.category,status:state.status,creator:$('#creator').value,kind:$('#kind').value,after:$('#after').value,before:$('#before').value});
   const result=await api('posts?'+params);state.posts=result.posts;$('#search-warning').textContent=result.warning;renderCards();
 }
-async function refresh(){if(state.busy)return;state.busy=true;try{state.data=await api('state');renderChrome();await loadPosts();}finally{state.busy=false;}}
+async function refresh(){if(state.busy)return;state.busy=true;try{const keep=state.chatBusy?state.data.chat:null;state.data=await api('state');if(keep)state.data.chat=keep;renderChrome();if($('#chat-dialog').open&&!state.chatBusy){const sig=JSON.stringify(state.data.chat);if(sig!==state.chatSig){state.chatSig=sig;renderChat();}}await loadPosts();}finally{state.busy=false;}}
 async function navigate(category,status){state.category=category;state.status=status;renderChrome();await loadPosts();}
 function points(items){return items.map(k=>`<div class="evidence-point">${esc(k.text)}<details><summary>Check source quote</summary><blockquote><mark>${esc(k.quote)}</mark></blockquote></details></div>`).join('');}
 async function openPost(id){state.active=await api('posts/'+id);state.tab='overview';renderDetail();show('#detail-dialog');}
@@ -88,18 +88,23 @@ function renderManage(){
 }
 function renderChat(){
   const c=state.data.chat||{history:[],pending:[]};
+  state.chatSig=JSON.stringify(state.data.chat);
   $('#chat-log').innerHTML=c.history.length?c.history.map(m=>`<div class="chat-msg ${m.role}">${esc(m.text)}</div>`).join(''):'<p class="muted-note">Tell me how you want your saves organised. For example: “put the speaking videos in Communication”, “merge Marketing into Business”, or “start over with three broad categories”.</p>';
   $('#chat-pending').innerHTML=c.pending.length?`<div class="suggestion"><strong>Proposed changes</strong>${c.pending.map(p=>`<div class="change"><span>${esc(p.label)}</span>${p.titles.length?`<ul>${p.titles.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:''}</div>`).join('')}<div class="modal-actions"><button class="text-btn" data-chat-discard>Discard</button><button class="button primary" data-chat-apply>Apply changes</button></div></div>`:'';
   $('#chat-log').scrollTop=$('#chat-log').scrollHeight;
 }
 async function sendChat(){
-  const box=$('#chat-input'),message=box.value.trim();if(!message)return;
-  const send=$('#chat-send');send.disabled=box.disabled=true;
-  const c=state.data.chat||{history:[],pending:[]};
-  $('#chat-log').insertAdjacentHTML('beforeend',`<div class="chat-msg user">${esc(message)}</div><div class="chat-msg assistant">Thinking…</div>`);
-  $('#chat-log').scrollTop=$('#chat-log').scrollHeight;
+  const box=$('#chat-input'),message=box.value.trim();if(!message||state.chatBusy)return;
+  const send=$('#chat-send');state.chatBusy=true;send.disabled=box.disabled=true;
+  const log=$('#chat-log');
+  log.insertAdjacentHTML('beforeend',`<div class="chat-msg user">${esc(message)}</div><div class="chat-msg assistant" id="chat-thinking">Thinking… this can take up to a minute with a big library.</div>`);
+  log.scrollTop=log.scrollHeight;
   try{state.data.chat=await api('categories/chat',{message});box.value='';}
-  finally{send.disabled=box.disabled=false;renderChat();box.focus();}
+  catch(e){
+    // A modal dialog hides the page toast, so errors must appear inside the chat itself.
+    state.data.chat={...(state.data.chat||{pending:[]}),history:[...(state.data.chat?.history||[]),{role:'user',text:message},{role:'assistant',text:'That did not go through: '+(e.message||'unknown error')}]};
+  }
+  finally{state.chatBusy=false;send.disabled=box.disabled=false;renderChat();box.focus();}
 }
 document.addEventListener('keydown',e=>{if(e.target.id==='chat-input'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();action(sendChat);}});
 function renderJobs(){
