@@ -436,21 +436,35 @@ def _filing():
 
 def chat_view():
     """The saved conversation plus a readable preview of the changes waiting for approval.
-    Videos already filed somewhere else are marked with where they are now: those need explicit approval."""
+    Every video that would move is listed with where it is now and where it would go. Nothing is applied
+    until the user ticks it: each video, each new category, each rename and each delete."""
     pending=db.setting('chat_pending') or []
     titles,primary=_filing()
+    with db.connect() as c: existing={r['name'].casefold() for r in c.execute('SELECT name FROM categories WHERE parent_id IS NULL')}
     out=[]
     for ch in pending:
+        confirm=None
         if ch['kind']=='move':
             items=[{'id':i,'title':titles[i],'from':primary.get(i)} for i in ch['entry_ids'] if i in titles and (primary.get(i) or '').casefold()!=ch['name'].casefold()]
             label=f"Move {len(items)} save{'s' if len(items)!=1 else ''} to “{ch['name']}”"
         elif ch['kind']=='merge':
             items=[{'id':i,'title':t,'from':primary.get(i)} for i,t in titles.items() if (primary.get(i) or '').casefold()==ch['source'].casefold()]
             label=f"Merge “{ch['source']}” into “{ch['name']}”"
-        elif ch['kind']=='rename': items=[]; label=f"Rename “{ch['source']}” to “{ch['name']}”"
-        else: items=[]; label=f"Delete “{ch['source']}” if it is empty"
-        out.append({'label':label,'to':ch['name'],'items':items})
+        elif ch['kind']=='rename': items=[]; label=f"Rename “{ch['source']}” to “{ch['name']}”"; confirm='rename:'+ch['source']
+        else: items=[]; label=f"Delete “{ch['source']}” if it is empty"; confirm='delete:'+ch['source']
+        new=ch['kind'] in ('move','merge') and ch['name'].casefold() not in existing
+        out.append({'label':label,'to':ch['name'],'items':items,'new_category':ch['name'] if new else None,'confirm':confirm})
     return {'history':db.setting('chat_history',[]) or [],'pending':out}
+
+
+def _proposal_text(view):
+    """Plain-text listing of everything proposed, added to the chat after each turn."""
+    lines=['Proposed, nothing has changed yet. Tick what you approve below:']
+    for p in view['pending']:
+        lines.append(f"• {p['label']}"+(f" (creates the new category “{p['new_category']}”)" if p['new_category'] else ''))
+        lines+=[f"    – {x['title']} ({x['from'] or 'no category'} → {p['to']})" for x in p['items'][:15]]
+        if len(p['items'])>15: lines.append(f"    …and {len(p['items'])-15} more.")
+    return '\n'.join(lines)
 
 
 class ChatMessage(BaseModel):
@@ -461,7 +475,13 @@ class ChatMessage(BaseModel):
 def chat_turn(body:ChatMessage):
     from . import ai
     ai.chat(body.message.strip())
-    return chat_view()
+    view=chat_view()
+    if view['pending']:
+        history=db.setting('chat_history',[]) or []
+        history.append({'role':'assistant','text':_proposal_text(view)})
+        db.put_setting('chat_history',history[-30:])
+        view=chat_view()
+    return view
 
 
 @app.post('/api/categories/chat/discard')
@@ -472,13 +492,14 @@ def chat_discard():
 
 class ApplyChat(BaseModel):
     approved:list[str]=Field(default_factory=list,max_length=1000)
+    confirmed:list[str]=Field(default_factory=list,max_length=200)  # 'new:Name', 'rename:Source', 'delete:Source'
 
 
 @app.post('/api/categories/chat/apply')
 def chat_apply(body:ApplyChat=ApplyChat()):
-    """Apply the pending changes. A video that already has a category only moves if the user approved it by id."""
+    """Apply the pending changes. Nothing happens without a tick: a video moves only if its id is approved, a category is created only if 'new:Name' is confirmed, a rename or delete only if confirmed."""
     idle()
-    approved=set(body.approved)
+    approved=set(body.approved); confirmed={x.casefold() for x in body.confirmed}
     titles,primary=_filing()
     changes=db.setting('chat_pending') or []
     moved=[];filed=[];held=[];notes=[]
@@ -487,7 +508,9 @@ def chat_apply(body:ApplyChat=ApplyChat()):
         def leaf(name):
             row=root(name)
             if row and c.execute('SELECT 1 FROM categories WHERE parent_id=?',(row['id'],)).fetchone(): return None
-            return row['id'] if row else c.execute('INSERT INTO categories(name) VALUES(?)',(name,)).lastrowid
+            if row: return row['id']
+            if ('new:'+name).casefold() not in confirmed: return 0   # not approved: never create
+            return c.execute('INSERT INTO categories(name) VALUES(?)',(name,)).lastrowid
         def put(pid,cat):
             c.execute('DELETE FROM placements WHERE post_id=?',(pid,))
             c.execute('INSERT INTO placements VALUES(?,?,1)',(pid,cat))
@@ -496,32 +519,38 @@ def chat_apply(body:ApplyChat=ApplyChat()):
             kind=ch['kind']
             if kind=='move':
                 cat=leaf(ch['name'])
-                if not cat: notes.append(f"{ch['name']} has subcategories, so nothing was moved there."); continue
+                if cat is None: notes.append(f"{ch['name']} has subcategories, so nothing was moved there."); continue
+                if cat==0: notes.append(f"The new category {ch['name']} was not approved, so it was not created and nothing was moved into it."); continue
                 for pid in ch['entry_ids']:
                     if pid not in titles: continue
                     before=primary.get(pid)
                     if (before or '').casefold()==ch['name'].casefold(): continue
-                    if before and pid not in approved: held.append((titles[pid],before)); continue
+                    if pid not in approved: held.append((titles[pid],before or 'no category')); continue
                     put(pid,cat)
                     (moved if before else filed).append((titles[pid],before,ch['name']))
             elif kind=='rename':
                 row=root(ch['source'])
                 if not row: continue
+                if ('rename:'+ch['source']).casefold() not in confirmed: notes.append(f"Renaming {ch['source']} was not approved."); continue
                 other=root(ch['name'])
                 if other and other['id']!=row['id']: kind='merge'
                 else: c.execute('UPDATE categories SET name=? WHERE id=?',(ch['name'],row['id'])); notes.append(f"Renamed {ch['source']} to {ch['name']}.")
             if kind=='merge':
-                a,b=root(ch['source']),leaf(ch['name'])
-                if not a or not b or a['id']==b: continue
+                a=root(ch['source'])
+                if not a: continue
                 members=[pid for pid,cat in primary.items() if (cat or '').casefold()==ch['source'].casefold()]
                 if any(pid not in approved for pid in members):
                     held.extend((titles[pid],ch['source']) for pid in members if pid in titles and pid not in approved)
                     notes.append(f"Merge of {ch['source']} into {ch['name']} was not done because not every video in it was approved."); continue
+                b=leaf(ch['name'])
+                if b==0: notes.append(f"The new category {ch['name']} was not approved, so the merge was not done."); continue
+                if not b or a['id']==b: continue
                 c.execute('UPDATE OR IGNORE placements SET category_id=? WHERE category_id=?',(b,a['id']))
                 c.execute('DELETE FROM categories WHERE id=?',(a['id'],))
                 moved.extend((titles[pid],ch['source'],ch['name']) for pid in members if pid in titles)
             elif kind=='delete':
                 a=root(ch['source'])
+                if a and ('delete:'+ch['source']).casefold() not in confirmed: notes.append(f"Deleting {ch['source']} was not approved."); continue
                 if a and not c.execute('SELECT 1 FROM placements WHERE category_id=?',(a['id'],)).fetchone() and not c.execute('SELECT 1 FROM categories WHERE parent_id=?',(a['id'],)).fetchone():
                     c.execute('DELETE FROM categories WHERE id=?',(a['id'],)); notes.append(f"Deleted the empty category {ch['source']}.")
                 elif a: notes.append(f"{ch['source']} still has saves, so it was kept.")

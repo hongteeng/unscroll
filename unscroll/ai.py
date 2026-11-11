@@ -200,6 +200,8 @@ def chat(message):
             'Use exact existing names for existing categories and exact ids from "entries". Judge saves by their real subject, not their current category. '
             'When the library has no categories yet, propose a few broad ones a person would use and move every save into one. '
             'In your reply, say how many saves you would take OUT of a category they are already in, because those need the user\'s approval one by one. '
+            'You cannot apply anything. Every change is only a proposal the user must tick and approve one by one afterwards, so never say a change has been made. '
+            'Treat vague messages such as "ok", "go" or "build it now" as a request to propose, never as permission to act. '
             'If the user only asks a question, answer it and propose no changes. Previous turns are in "history".')
     data={'categories':[{'name':r['name'],'saves':r['count'],'has_subcategories':bool(r['children'])} for r in tree],'entries':entries,'history':history[-12:],'message':message}
     result=ask('chat',system,data,ChatResult)
