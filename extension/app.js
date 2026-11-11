@@ -92,7 +92,13 @@ function renderChat(){
   state.chatSig=JSON.stringify(state.data.chat);
   $('#chat-log').innerHTML=c.history.length?c.history.map(m=>`<div class="chat-msg ${m.role}">${esc(m.text)}</div>`).join(''):'<p class="muted-note">Chat about how you want your saves organised, for example “propose categories for my library”. I will lay out the exact videos that would move. Nothing changes until you approve, and you can reply to adjust it.</p>';
   if(c.pending.some(p=>!Array.isArray(p.items))){$('#chat-pending').innerHTML='<div class="banner">The helper is running an older version. Close it (Ctrl+C) and run Start.command again before applying changes.</div>';return;}
-  $('#chat-pending').innerHTML=c.pending.length?`<div class="suggestion"><strong>The plan. Nothing changes until you approve it.</strong>${c.pending.map(p=>`<div class="change"><span>${esc(p.label)}${p.new_category?` (new category)`:''}</span>${p.items.length?`<ul class="approve-list">${p.items.slice(0,40).map(x=>`<li>${esc(x.title)}<small>${esc(x.from||'no category')} → ${esc(p.to)}</small> <button class="text-btn" data-chat-drop="${esc(x.id)}">Keep here</button></li>`).join('')}</ul>${p.items.length>40?`<p class="muted-note">…and ${p.items.length-40} more.</p>`:''}`:''}</div>`).join('')}<div class="modal-actions"><button class="text-btn" data-chat-discard>Discard plan</button><button class="button primary" data-chat-apply>Approve all</button></div></div>`:'';
+  if(c.pending.length){
+    const total=c.pending.reduce((n,p)=>n+p.items.length,0),dest=[...new Set(c.pending.filter(p=>p.items.length).map(p=>p.to))],fresh=c.pending.filter(p=>p.new_category).map(p=>p.new_category),gone=c.pending.filter(p=>p.confirm||/^Delete/.test(p.label)).length;
+    const q=`Move ${total} video${total===1?'':'s'} into ${dest.length} categor${dest.length===1?'y':'ies'}${fresh.length?` (new: ${fresh.map(esc).join(', ')})`:''}${gone?` and remove ${gone} emptied categor${gone===1?'y':'ies'}`:''}? Nothing changes until you choose.`;
+    const list=c.pending.map(p=>`<div class="change"><span>${esc(p.label)}${p.new_category?' (new category)':''}</span>${p.items.length?`<ul class="approve-list">${p.items.slice(0,60).map(x=>`<li>${esc(x.title)}<small>${esc(x.from||'no category')} → ${esc(p.to)}</small> <button class="text-btn" data-chat-drop="${esc(x.id)}">Keep here</button></li>`).join('')}</ul>${p.items.length>60?`<p class="muted-note">…and ${p.items.length-60} more.</p>`:''}`:''}</div>`).join('');
+    $('#chat-pending').innerHTML=`<div class="ask-card"><div class="ask-q"><span>${q}</span><button class="ask-x" data-chat-discard aria-label="Decline">×</button></div><ol class="ask-opts"><li><button data-chat-apply><b>1</b><span>Approve all ${total} moves<small>They move now, then I list exactly what changed</small></span></button></li><li><button data-chat-discard><b>2</b><span>Decline<small>Nothing moves and the plan is dropped</small></span></button></li><li><button data-chat-pick><b>3</b><span>Approve, but I'll choose videos to keep<small>Opens the list so you can press Keep here on any video</small></span></button></li></ol><details id="plan-details" ${state.planOpen?'open':''}><summary>See the ${total} video${total===1?'':'s'}, or type your own answer below</summary>${list}</details></div>`;
+    const dt=$('#plan-details');if(dt)dt.addEventListener('toggle',()=>{state.planOpen=dt.open;});
+  }else $('#chat-pending').innerHTML='';
   $('#chat-log').scrollTop=$('#chat-log').scrollHeight;
 }
 async function sendChat(){
@@ -108,6 +114,10 @@ async function sendChat(){
   }
   finally{state.chatBusy=false;send.disabled=box.disabled=false;renderChat();box.focus();}
 }
+document.addEventListener('keydown',e=>{
+  // Number keys answer the question card when the message box is empty.
+  const dlg=$('#chat-dialog');if(dlg?.open&&['1','2','3'].includes(e.key)&&(e.target.id!=='chat-input'||!e.target.value)&&document.querySelector('.ask-card')){e.preventDefault();const sel={1:'[data-chat-apply]',2:'.ask-opts [data-chat-discard]',3:'[data-chat-pick]'}[e.key];document.querySelector('.ask-card '+sel)?.click();return;}
+});
 document.addEventListener('keydown',e=>{if(e.target.id==='chat-input'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();action(sendChat);}});
 function renderJobs(){
   const d=state.data;$('#jobs-content').innerHTML=`<p class="muted-note">${d.paused?'Paused':'Running'} · ${d.job_counts?.running||0} in progress · ${d.job_counts?.queued||0} waiting · ${d.counts?.ready||0} of ${d.counts?.total||0} posts done · ${d.job_counts?.failed||0} failed</p>${d.jobs.length?d.jobs.map(j=>`<div class="job-row"><span class="pill ${j.state==='failed'?'failed':''}">${esc(({running:'in progress',queued:'waiting',failed:'failed'})[j.state]||j.state)}</span><div>${esc(({process:'Extract & write',place:'Place in categories',propose:'Propose category tree',download:'Keep offline',index:'Rebuild search'})[j.kind]||j.kind)}<small>${esc(j.caption?.slice(0,90)||j.post_id||'Whole library')}</small>${j.error?`<small class="job-error">${esc(j.error)}</small>`:''}</div>${j.state==='failed'?`<button class="text-btn" data-retry-job="${j.id}">Retry</button>`:''}</div>`).join(''):'<p>No active jobs. Import your saves, then start with a batch of 20.</p>'}`;
@@ -152,6 +162,7 @@ document.addEventListener('click',event=>action(async()=>{
   if(b.id==='suggest-cats'){renderChat();show('#chat-dialog');return $('#chat-input').focus();}
   if(b.id==='chat-send')return sendChat();
   if(b.hasAttribute('data-chat-apply')){state.data.chat=await api('categories/chat/apply',{});await refresh();return renderChat();}
+  if(b.hasAttribute('data-chat-pick')){state.planOpen=true;const dt=$('#plan-details');if(dt){dt.open=true;dt.scrollIntoView({block:'nearest'});}return;}
   if(b.hasAttribute('data-chat-drop')){state.data.chat=await api('categories/chat/drop',{id:b.dataset.chatDrop});return renderChat();}
   if(b.hasAttribute('data-chat-discard')){state.data.chat=await api('categories/chat/discard',{});return renderChat();}
   if(b.dataset.tab){state.tab=b.dataset.tab;return renderDetail();}
