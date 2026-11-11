@@ -199,9 +199,9 @@ def chat(message):
             'rename (source = existing name, name = new name), merge (source folded into name), delete (source, only when it will be empty). '
             'Use exact existing names for existing categories and exact ids from "entries". Judge saves by their real subject, not their current category. '
             'When the library has no categories yet, propose a few broad ones a person would use and move every save into one. '
-            'In your reply, say how many saves you would take OUT of a category they are already in, because those need the user\'s approval one by one. '
+            'In your reply, say how many saves you would take OUT of a category they are already in. '
             'Emit one separate move change for EACH destination category you mention, with all of its saves in entry_ids, in the same message. Never describe a change in the reply that you did not also emit, and never say you will do it "next" or "as it appears". Open the reply by stating how many categories and how many saves you are proposing. '
-            'You cannot apply anything. Every change is only a proposal the user must tick and approve one by one afterwards, so never say a change has been made. '
+            'You cannot apply anything. Every change is only a proposal; the user approves the whole plan afterwards with one button, so never say a change has been made. '
             'Treat vague messages such as "ok", "go" or "build it now" as a request to propose, never as permission to act. '
             'If the user only asks a question, answer it and propose no changes. Previous turns are in "history".')
     data={'categories':[{'name':r['name'],'saves':r['count'],'has_subcategories':bool(r['children'])} for r in tree],'entries':entries,'history':history[-12:],'message':message}

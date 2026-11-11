@@ -43,25 +43,17 @@ class CollectionAndChat(unittest.TestCase):
         self.assertIn('Communication',view['pending'][0]['label'])
         # The chat reply itself lists every video and the category name.
         listing=view['history'][-1]['text']
-        self.assertIn('Communication',listing); self.assertIn('nothing has changed yet',listing)
+        self.assertIn('Communication',listing); self.assertIn('Nothing has changed yet',listing)
         self.assertEqual(view['pending'][0]['new_category'],'Communication')
         # A vague "ok build now" is just another chat turn: still nothing changes.
         with patch.object(ai,'ask',return_value=ai.ChatResult(reply='Building.',changes=[ai.Change(kind='move',name='Communication',entry_ids=['15','16'])])):
             client.post('/api/categories/chat',json={'message':'ok build now'},headers=h)
         self.assertEqual(db.tree(),[])
-        # Applying with no ticks changes nothing and creates no category.
-        done=client.post('/api/categories/chat/apply',json={},headers=h).json()
-        self.assertEqual(db.tree(),[]); self.assertIn('not approved',done['history'][-1]['text'])
-        # Videos ticked but the new category not confirmed: still nothing is created.
-        db.put_setting('chat_pending',[{'kind':'move','name':'Communication','source':'','entry_ids':['15','16']}])
-        client.post('/api/categories/chat/apply',json={'approved':['15','16']},headers=h)
-        self.assertEqual(db.tree(),[])
-        # Category confirmed but only one video ticked: only that video moves.
-        db.put_setting('chat_pending',[{'kind':'move','name':'Communication','source':'','entry_ids':['15','16']}])
-        client.post('/api/categories/chat/apply',json={'approved':['15'],'confirmed':['new:Communication']},headers=h)
-        self.assertEqual(db.tree()[0]['name'],'Communication'); self.assertEqual(db.tree()[0]['count'],1)
+        # Only the Apply button (the user's approval of the plan) changes anything, and it applies the whole plan.
+        client.post('/api/categories/chat/apply',json={},headers=h)
+        self.assertEqual(db.tree()[0]['name'],'Communication'); self.assertEqual(db.tree()[0]['count'],2)
 
-    def test_recategorising_needs_per_video_approval_and_is_reported(self):
+    def test_approved_plan_moves_are_reported(self):
         from unscroll.server import app
         entry={'title':'Speaking drill','key_points':[],'topics':[]}
         a=self.add(21,['Business']); b=self.add(22,['Business'])
@@ -70,12 +62,11 @@ class CollectionAndChat(unittest.TestCase):
         db.put_setting('chat_pending',[{'kind':'move','name':'Communication','source':'','entry_ids':['21','22']}])
         client=TestClient(app,base_url='http://127.0.0.1:8765')
         h={'X-Unscroll-Token':client.get('/api/session').json()['token']}
-        view=client.post('/api/categories/chat/apply',json={'approved':['21'],'confirmed':['new:Communication']},headers=h).json()
+        view=client.post('/api/categories/chat/apply',json={},headers=h).json()
         names={c['name']:c['count'] for c in db.tree()}
-        self.assertEqual(names,{'Business':1,'Communication':1})
+        self.assertEqual(names.get('Communication'),2)
         report=view['history'][-1]['text']
         self.assertIn('Speaking drill — Business → Communication',report)
-        self.assertIn('stays in Business',report)
 
     def test_unapproved_move_is_listed_with_current_category_in_preview(self):
         from unscroll.server import chat_view

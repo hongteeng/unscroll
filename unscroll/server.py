@@ -459,7 +459,7 @@ def chat_view():
 
 def _proposal_text(view):
     """Plain-text listing of everything proposed, added to the chat after each turn."""
-    lines=['Proposed, nothing has changed yet. Tick what you approve below:']
+    lines=['This is the plan. Nothing has changed yet. Press “Approve plan and apply” below to carry it out, or Discard to drop it:']
     for p in view['pending']:
         lines.append(f"• {p['label']}"+(f" (creates the new category “{p['new_category']}”)" if p['new_category'] else ''))
         lines+=[f"    – {x['title']} ({x['from'] or 'no category'} → {p['to']})" for x in p['items'][:15]]
@@ -491,25 +491,22 @@ def chat_discard():
 
 
 class ApplyChat(BaseModel):
-    approved:list[str]=Field(default_factory=list,max_length=1000)
-    confirmed:list[str]=Field(default_factory=list,max_length=200)  # 'new:Name', 'rename:Source', 'delete:Source'
+    pass
 
 
 @app.post('/api/categories/chat/apply')
 def chat_apply(body:ApplyChat=ApplyChat()):
-    """Apply the pending changes. Nothing happens without a tick: a video moves only if its id is approved, a category is created only if 'new:Name' is confirmed, a rename or delete only if confirmed."""
+    """Apply the whole pending plan. Pressing Apply is the user's approval of the plan; the AI itself can never call this."""
     idle()
-    approved=set(body.approved); confirmed={x.casefold() for x in body.confirmed}
     titles,primary=_filing()
     changes=db.setting('chat_pending') or []
-    moved=[];filed=[];held=[];notes=[]
+    moved=[];filed=[];notes=[]
     with db.connect() as c:
         def root(name): return c.execute('SELECT id FROM categories WHERE parent_id IS NULL AND name=? COLLATE NOCASE',(name,)).fetchone()
         def leaf(name):
             row=root(name)
             if row and c.execute('SELECT 1 FROM categories WHERE parent_id=?',(row['id'],)).fetchone(): return None
             if row: return row['id']
-            if ('new:'+name).casefold() not in confirmed: return 0   # not approved: never create
             return c.execute('INSERT INTO categories(name) VALUES(?)',(name,)).lastrowid
         def put(pid,cat):
             c.execute('DELETE FROM placements WHERE post_id=?',(pid,))
@@ -520,18 +517,15 @@ def chat_apply(body:ApplyChat=ApplyChat()):
             if kind=='move':
                 cat=leaf(ch['name'])
                 if cat is None: notes.append(f"{ch['name']} has subcategories, so nothing was moved there."); continue
-                if cat==0: notes.append(f"The new category {ch['name']} was not approved, so it was not created and nothing was moved into it."); continue
                 for pid in ch['entry_ids']:
                     if pid not in titles: continue
                     before=primary.get(pid)
                     if (before or '').casefold()==ch['name'].casefold(): continue
-                    if pid not in approved: held.append((titles[pid],before or 'no category')); continue
                     put(pid,cat)
                     (moved if before else filed).append((titles[pid],before,ch['name']))
             elif kind=='rename':
                 row=root(ch['source'])
                 if not row: continue
-                if ('rename:'+ch['source']).casefold() not in confirmed: notes.append(f"Renaming {ch['source']} was not approved."); continue
                 other=root(ch['name'])
                 if other and other['id']!=row['id']: kind='merge'
                 else: c.execute('UPDATE categories SET name=? WHERE id=?',(ch['name'],row['id'])); notes.append(f"Renamed {ch['source']} to {ch['name']}.")
@@ -539,22 +533,17 @@ def chat_apply(body:ApplyChat=ApplyChat()):
                 a=root(ch['source'])
                 if not a: continue
                 members=[pid for pid,cat in primary.items() if (cat or '').casefold()==ch['source'].casefold()]
-                if any(pid not in approved for pid in members):
-                    held.extend((titles[pid],ch['source']) for pid in members if pid in titles and pid not in approved)
-                    notes.append(f"Merge of {ch['source']} into {ch['name']} was not done because not every video in it was approved."); continue
                 b=leaf(ch['name'])
-                if b==0: notes.append(f"The new category {ch['name']} was not approved, so the merge was not done."); continue
                 if not b or a['id']==b: continue
                 c.execute('UPDATE OR IGNORE placements SET category_id=? WHERE category_id=?',(b,a['id']))
                 c.execute('DELETE FROM categories WHERE id=?',(a['id'],))
                 moved.extend((titles[pid],ch['source'],ch['name']) for pid in members if pid in titles)
             elif kind=='delete':
                 a=root(ch['source'])
-                if a and ('delete:'+ch['source']).casefold() not in confirmed: notes.append(f"Deleting {ch['source']} was not approved."); continue
                 if a and not c.execute('SELECT 1 FROM placements WHERE category_id=?',(a['id'],)).fetchone() and not c.execute('SELECT 1 FROM categories WHERE parent_id=?',(a['id'],)).fetchone():
                     c.execute('DELETE FROM categories WHERE id=?',(a['id'],)); notes.append(f"Deleted the empty category {ch['source']}.")
                 elif a: notes.append(f"{ch['source']} still has saves, so it was kept.")
-    lines=['Done. Here is exactly what changed.']
+    lines=['Plan approved and applied. Here is exactly what changed.']
     if moved:
         lines.append(f"Moved to a different category ({len(moved)}):")
         lines+=[f"• {t} — {b} → {a}" for t,b,a in moved]
@@ -562,12 +551,8 @@ def chat_apply(body:ApplyChat=ApplyChat()):
         lines.append(f"Filed (they had no category) ({len(filed)}):")
         lines+=[f"• {t} → {a}" for t,_,a in filed[:12]]
         if len(filed)>12: lines.append(f"…and {len(filed)-12} more.")
-    if held:
-        lines.append(f"Left where they were, not approved ({len(held)}):")
-        lines+=[f"• {t} — stays in {b}" for t,b in held[:20]]
-        if len(held)>20: lines.append(f"…and {len(held)-20} more.")
     lines+=notes
-    if not (moved or filed or held or notes): lines.append('Nothing needed changing.')
+    if not (moved or filed or notes): lines.append('Nothing needed changing.')
     db.put_setting('chat_pending',[])
     history=db.setting('chat_history',[]) or []
     history.append({'role':'assistant','text':'\n'.join(lines)})
