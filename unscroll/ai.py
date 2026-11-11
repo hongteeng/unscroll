@@ -219,6 +219,29 @@ def chat(message):
     return reply
 
 
+SUMMARY_STYLE=('You write the summary page for one category of a person\'s saved TikTok videos. The saves are given as data: titles and key points taken from the videos. '
+    'Write for the person who saved them, to remind them what is in here and what is worth acting on. '
+    'Length: roughly 250 to 400 words, in 3 to 5 short paragraphs of plain prose. No headings, no bullet lists, no bold. '
+    'Cover the main themes and how big each is, the specific advice, tools, numbers and names that come up most, where saves agree, where they contradict each other, and the few saves most worth revisiting, named by their titles. '
+    'Use only what is in the data. Do not invent facts, figures or claims, and say so plainly when the evidence is thin. '
+    'Write the way a careful person talks: concrete nouns and verbs, short sentences mixed with longer ones, no filler. '
+    'Avoid words like leverage, robust, delve, comprehensive, landscape, tapestry, journey, unlock, empower and holistic. '
+    'Do not open with "This category" or end with a recap or a moral. Do not address the reader with a call to action.')
+
+
+def category_summary(category_id):
+    """Write a summary of one category from its videos' titles and key points. Called only when the person asks for it."""
+    with db.connect() as c:
+        row=c.execute('SELECT name FROM categories WHERE id=?',(category_id,)).fetchone()
+        if not row: raise ValueError('Category not found.')
+        entries=[json.loads(r['entry']) for r in c.execute('SELECT p.entry FROM posts p JOIN placements l ON l.post_id=p.id WHERE l.category_id=? AND p.entry IS NOT NULL',(category_id,))]
+    if not entries: raise ValueError('This category has no written videos to summarise yet.')
+    data={'category':row['name'],'video_count':len(entries),
+          'videos':[{'title':e['title'],'key_points':[k['text'] for k in e.get('key_points',[])[:3]],'topics':e.get('topics',[])[:4]} for e in entries]}
+    text=converse(SUMMARY_STYLE,[{'role':'user','content':json.dumps(data,ensure_ascii=False)}])
+    return text,len(entries)
+
+
 class Intent(BaseModel):
     model_config=ConfigDict(extra='ignore')
     action: Literal['talk','build','approve']

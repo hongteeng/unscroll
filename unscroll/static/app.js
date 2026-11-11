@@ -60,7 +60,18 @@ async function loadPosts(){
   const result=await api('posts?'+params);state.posts=result.posts;$('#search-warning').textContent=result.warning;renderCards();
 }
 async function refresh(){if(state.busy)return;state.busy=true;try{const keep=state.chatBusy?state.data.chat:null;state.data=await api('state');if(keep)state.data.chat=keep;renderChrome();if($('#chat-dialog').open&&!state.chatBusy){const sig=JSON.stringify(state.data.chat);if(sig!==state.chatSig){state.chatSig=sig;renderChat();}}await loadPosts();}finally{state.busy=false;}}
-async function navigate(category,status){state.category=category;state.status=status;renderChrome();await loadPosts();}
+function renderSummary(){
+  const box=$('#cat-summary');if(!box)return;
+  if(!state.category){box.hidden=true;return;}
+  box.hidden=false;
+  const sm=state.summaries?.[state.category];
+  $('#cat-summary-body').innerHTML=sm?.text?sm.text.split(/\n\s*\n/).map(t=>`<p>${esc(t)}</p>`).join(''):`<p class="muted-note">${sm?'No summary yet. Press Write summary and Claude will read this category\'s saves and write one.':'Loading…'}</p>`;
+  $('#summary-note').textContent=sm?.text?`Written from ${sm.written_for} video${sm.written_for===1?'':'s'}${sm.now!==sm.written_for?`. This category has ${sm.now} now.`:'.'}`:'';
+  const btn=$('#update-summary');btn.textContent=state.summaryBusy?'Writing…':sm?.text?'Update summary':'Write summary';btn.disabled=!!state.summaryBusy;
+  box.open=!!state.summaryOpen;
+}
+async function loadSummary(){const id=state.category;if(!id)return renderSummary();state.summaries=state.summaries||{};try{state.summaries[id]=await api(`categories/${id}/summary`);}catch(e){state.summaries[id]={text:'',written_for:0,now:0};}renderSummary();}
+async function navigate(category,status){state.category=category;state.status=status;renderChrome();renderSummary();loadPosts();await loadSummary();}
 function points(items){return items.map(k=>`<div class="evidence-point">${esc(k.text)}<details><summary>Check source quote</summary><blockquote><mark>${esc(k.quote)}</mark></blockquote></details></div>`).join('');}
 async function openPost(id){state.active=await api('posts/'+id);state.tab='overview';renderDetail();show('#detail-dialog');}
 function renderDetail(){
@@ -125,6 +136,7 @@ function renderJobs(){
   const d=state.data;$('#jobs-content').innerHTML=`<p class="muted-note">${d.paused?'Paused':'Running'} · ${d.job_counts?.running||0} in progress · ${d.job_counts?.queued||0} waiting · ${d.counts?.ready||0} of ${d.counts?.total||0} posts done · ${d.job_counts?.failed||0} failed</p>${d.jobs.length?d.jobs.map(j=>`<div class="job-row"><span class="pill ${j.state==='failed'?'failed':''}">${esc(({running:'in progress',queued:'waiting',failed:'failed'})[j.state]||j.state)}</span><div>${esc(({process:'Extract & write',place:'Place in categories',propose:'Propose category tree',download:'Keep offline',index:'Rebuild search'})[j.kind]||j.kind)}<small>${esc(j.caption?.slice(0,90)||j.post_id||'Whole library')}</small>${j.error?`<small class="job-error">${esc(j.error)}</small>`:''}</div>${j.state==='failed'?`<button class="text-btn" data-retry-job="${j.id}">Retry</button>`:''}</div>`).join(''):'<p>No active jobs. Import your saves, then start with a batch of 20.</p>'}`;
 }
 function renderSettings(){const s=state.session;$('#settings-content').innerHTML=`<div class="setting-row"><span>Speech recognition</span><small>English · local CPU · one worker</small></div><div class="setting-row"><span>Claude</span><small>${s.api_ready?'Configured':'API key needed'} · ${esc(s.model)}</small></div><div class="setting-row"><span>Media tools</span><small>${Object.entries(s.tools).map(([k,v])=>`${esc(k)} ${v?'ok':'missing'}`).join(' · ')}</small></div><div class="setting-row"><span>Permanent downloads</span><code>${esc(s.download_dir)}</code></div><div class="setting-row"><span>Claude token usage</span><small>${state.data.usage?.input_tokens||0} in · ${state.data.usage?.output_tokens||0} out</small></div><p class="muted-note">Extension pairing token — paste this into the Unscroll Chrome extension. Treat it like a local password.</p><div class="token-wrap">${esc(state.token)}</div><p class="muted-note">${esc(state.data.search_warning||'Search embeddings run locally. The first model download needs an internet connection.')}</p>`;}
+$('#cat-summary')?.addEventListener('toggle',e=>{state.summaryOpen=e.target.open;});
 document.addEventListener('click',event=>action(async()=>{
   const del=event.target.closest('[data-del-cat]');
   if(del){const id=del.dataset.delCat;if(!confirm('Delete this empty category? Your videos are not affected.'))return;toast((await api(`categories/${id}/delete`,{})).message);if(state.category===Number(id))state.category=0;return refresh();}
@@ -160,6 +172,7 @@ document.addEventListener('click',event=>action(async()=>{
     toast(r.message);return refresh();
   }
   if(b.id==='undo-removal'){toast((await api('imports/undo',{})).message);return refresh();}
+  if(b.id==='update-summary'){const id=state.category;if(!id||state.summaryBusy)return;state.summaryBusy=true;renderSummary();try{state.summaries[id]=await api(`categories/${id}/summary`,{});}finally{state.summaryBusy=false;renderSummary();}return;}
   if(b.id==='move-selected'){const v=$('#move-target').value;if(!v)return toast('Choose where to move the selected cards.');let body={ids:[...state.selected]};if(v==='new'){const name=prompt('Name for the new category:');if(!name||!name.trim())return;body.name=name.trim();}else body.category_id=Number(v);const r=await api('posts/move-many',body);toast(r.message);state.selected.clear();$('#move-target').value='';await refresh();return;}
   if(b.id==='download-selected'){const r=await api('download',{ids:[...state.selected]});toast(`${r.queued} selected downloads queued.`);return refresh();}
   if(b.id==='pause'||b.id==='resume'){toast((await api(b.id,{})).message);return refresh();}

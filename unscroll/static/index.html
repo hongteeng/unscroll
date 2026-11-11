@@ -20,6 +20,7 @@
 <main>
   <header class="page-head"><h1 id="page-title">All saves</h1><button class="button subtle" id="open-jobs">Processing <span id="queue-dot"></span></button><button class="button primary" id="open-import"><svg class="i"><use href="#i-plus"/></svg>Import saves</button></header>
   <div id="setup-banner"></div>
+  <details id="cat-summary" class="cat-summary" hidden><summary>AI summary of this category</summary><div id="cat-summary-body"></div><div class="summary-foot"><span id="summary-note"></span><button id="update-summary" class="button subtle">Update summary</button></div></details>
   <section aria-label="Search and filters">
     <label class="search"><svg class="i"><use href="#i-search"/></svg><input id="search" type="search" placeholder="Search your saves by idea or keyword" aria-label="Search saved ideas"><kbd>/</kbd></label>
     <div class="filters"><label><span class="sr-only">Creator</span><select id="creator"><option value="">All creators</option></select></label><label><span class="sr-only">Content type</span><select id="kind"><option value="">All formats</option><option value="video">Videos</option><option value="carousel">Carousels</option></select></label><details class="date-filter"><summary>Save date</summary><div><label>From <input type="date" id="after"></label><label>To <input type="date" id="before"></label><button id="clear-dates" class="text-btn">Clear dates</button></div></details><span class="filter-spacer"></span><button class="button subtle" id="suggest-cats">Organise with AI</button></div>

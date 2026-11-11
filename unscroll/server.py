@@ -642,6 +642,33 @@ def delete_empty_category(ident:int):
     return {'message':f"Deleted the empty category {row['name']}."}
 
 
+def _cat_name(ident):
+    with db.connect() as c: return (c.execute('SELECT name FROM categories WHERE id=?',(ident,)).fetchone() or [''])[0]
+
+
+def _summary_view(ident):
+    saved=db.setting(f'category_summary:{ident}') or None
+    with db.connect() as c:
+        now=c.execute('SELECT COUNT(*) FROM placements WHERE category_id=?',(ident,)).fetchone()[0]
+        name=(c.execute('SELECT name FROM categories WHERE id=?',(ident,)).fetchone() or [''])[0]
+    if saved and saved.get('name')!=name: saved=None   # the id now belongs to a different category
+    return {'text':saved['text'] if saved else '','written_for':saved['count'] if saved else 0,'updated':saved['at'] if saved else None,'now':now}
+
+
+@app.get('/api/categories/{ident}/summary')
+def get_category_summary(ident:int):
+    return _summary_view(ident)
+
+
+@app.post('/api/categories/{ident}/summary')
+def write_category_summary(ident:int):
+    """Generate (or regenerate) the summary. Only runs when the person presses the button; new saves never trigger it."""
+    from . import ai
+    text,count=ai.category_summary(ident)
+    db.put_setting(f'category_summary:{ident}',{'text':text,'count':count,'at':time.time(),'name':_cat_name(ident)})
+    return _summary_view(ident)
+
+
 class Merge(BaseModel):
     target_id:int
 
