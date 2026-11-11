@@ -204,10 +204,11 @@ def chat(message):
     tree=db.tree(); lib=_library()
     system=('You help a person organise their saved TikTok videos into categories. Talk to them normally: answer questions, suggest categories, '
             'and say which kinds of videos would move where. Their library is below as reference data (category counts, then each save with its current category). '
-            'Nothing you say changes anything by itself: when they want moves, the app lays out the exact list of videos for them to approve or edit, and they can reply to adjust it. Never claim that anything was moved.\n\n'
+            'Nothing you say changes anything by itself: when they want moves, the app lays out the exact list of videos for them to approve or edit, and they can reply to adjust it. Never claim that anything was moved. There are no tick boxes and no "Build plan" button: the person approves by pressing Approve or by replying in the chat, so never mention either.\n\n'
             'Categories now: '+json.dumps([{'name':r['name'],'saves':r['count']} for r in tree],ensure_ascii=False)+'\n'
             'Saves (id omitted): '+json.dumps([{'title':x['title'],'in':x['filed_under']} for x in lib],ensure_ascii=False))
-    turns=[{'role':m['role'],'content':m['text']} for m in history[-14:] if m['role'] in ('user','assistant') and not m['text'].startswith(('This is the plan','Plan approved'))]
+    stale=('build plan','untick','tick each','tick what','here is the plan','plan approved','this is the plan')   # old wording from earlier versions of the app
+    turns=[{'role':m['role'],'content':m['text']} for m in history[-14:] if m['role'] in ('user','assistant') and not any(w in m['text'].casefold() for w in stale)]
     while turns and turns[0]['role']!='user': turns.pop(0)
     msgs=[]
     for t in turns+[{'role':'user','content':message}]:
