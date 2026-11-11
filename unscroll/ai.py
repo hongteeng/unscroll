@@ -200,11 +200,16 @@ def chat(message):
             'Use exact existing names for existing categories and exact ids from "entries". Judge saves by their real subject, not their current category. '
             'When the library has no categories yet, propose a few broad ones a person would use and move every save into one. '
             'In your reply, say how many saves you would take OUT of a category they are already in, because those need the user\'s approval one by one. '
+            'Emit one separate move change for EACH destination category you mention, with all of its saves in entry_ids, in the same message. Never describe a change in the reply that you did not also emit, and never say you will do it "next" or "as it appears". Open the reply by stating how many categories and how many saves you are proposing. '
             'You cannot apply anything. Every change is only a proposal the user must tick and approve one by one afterwards, so never say a change has been made. '
             'Treat vague messages such as "ok", "go" or "build it now" as a request to propose, never as permission to act. '
             'If the user only asks a question, answer it and propose no changes. Previous turns are in "history".')
     data={'categories':[{'name':r['name'],'saves':r['count'],'has_subcategories':bool(r['children'])} for r in tree],'entries':entries,'history':history[-12:],'message':message}
     result=ask('chat',system,data,ChatResult)
+    promised=lambda r: any(w in r.reply.lower() for w in ('propos','move','merge','rename','delete'))
+    if not result.changes and promised(result):
+        data['note']='Your last attempt described changes but returned none. Return the changes now, one move per destination category, with real entry_ids.'
+        result=ask('chat',system,data,ChatResult)
     valid={str(i) for i,_ in rows}; existing={r['name'].casefold() for r in tree}
     changes=[]
     for ch in result.changes:
@@ -212,9 +217,12 @@ def chat(message):
         if ch.kind=='move' and ch.name.strip() and ids: changes.append({'kind':'move','name':ch.name.strip(),'source':'','entry_ids':ids})
         elif ch.kind in ('rename','merge') and ch.source.strip().casefold() in existing and ch.name.strip(): changes.append({'kind':ch.kind,'name':ch.name.strip(),'source':ch.source.strip(),'entry_ids':[]})
         elif ch.kind=='delete' and ch.source.strip().casefold() in existing: changes.append({'kind':'delete','name':'','source':ch.source.strip(),'entry_ids':[]})
-    history=(history+[{'role':'user','text':message},{'role':'assistant','text':result.reply.strip()}])[-30:]
+    reply=result.reply.strip()
+    if not changes and promised(result):
+        reply+='\n\nNo changes were actually produced, so nothing is waiting for your approval. Try asking for one category at a time.'
+    history=(history+[{'role':'user','text':message},{'role':'assistant','text':reply}])[-30:]
     db.put_setting('chat_history',history); db.put_setting('chat_pending',changes)
-    return result.reply.strip(),changes
+    return reply,changes
 
 
 def collection_name(post):
