@@ -24,7 +24,7 @@ function renderChrome(){
   const d=state.data,c=d.counts,n=currentName();
   const nav=[['','All saves','grid',c.total],['ready','Ready to read','book',c.ready],['suggested','Offline picks','download',null],['failed','Needs attention','alert',c.failed||0]];
   $('#nav').innerHTML=nav.map(([s,t,i,count])=>`<button data-nav="${s}" class="${!state.category&&state.status===s?'active':''}"><svg class="i"><use href="#i-${i}"/></svg><span class="nav-label">${t}</span>${count!==null?`<span class="count">${count||0}</span>`:''}</button>`).join('');
-  $('#category-nav').innerHTML=d.tree.length?d.tree.map(r=>`<button class="cat-parent ${state.category===r.id?'active':''}" data-cat="${r.id}"><span class="nav-label">${esc(r.name)}</span></button>${r.children.map(s=>`<button class="cat-child ${state.category===s.id?'active':''}" data-cat="${s.id}"><span class="nav-label">${esc(s.name)}</span><span class="count">${s.count}</span></button>`).join('')}`).join(''):`<div class="empty-categories">No categories yet. Process some saves, then choose Suggest categories.</div>`;
+  $('#category-nav').innerHTML=d.tree.length?[...d.tree].map(r=>({...r,total:r.count+r.children.reduce((n,c)=>n+c.count,0)})).sort((a,b)=>b.total-a.total||a.name.localeCompare(b.name)).map(r=>`<button class="cat-parent ${state.category===r.id?'active':''}" data-cat="${r.id}"><span class="nav-label">${esc(r.name)}</span><span class="count">${r.total}</span></button>${[...r.children].sort((a,b)=>b.count-a.count).map(s=>`<button class="cat-child ${state.category===s.id?'active':''}" data-cat="${s.id}"><span class="nav-label">${esc(s.name)}</span><span class="count">${s.count}</span></button>`).join('')}`).join(''):`<div class="empty-categories">No categories yet. Process some saves, then choose Suggest categories.</div>`;
   $('#page-title').textContent=n;document.title=n+' · Unscroll';
   $('#queue-dot').textContent=d.job_counts?.queued||d.job_counts?.running?String((d.job_counts.queued||0)+(d.job_counts.running||0)):'';
   const old=$('#creator').value;
@@ -112,7 +112,7 @@ async function sendChat(){
     // A modal dialog hides the page toast, so errors must appear inside the chat itself.
     state.data.chat={...(state.data.chat||{pending:[]}),history:[...(state.data.chat?.history||[]),{role:'user',text:message},{role:'assistant',text:'That did not go through: '+(e.message||'unknown error')}]};
   }
-  finally{state.chatBusy=false;send.disabled=box.disabled=false;renderChat();box.focus();}
+  finally{state.chatBusy=false;send.disabled=box.disabled=false;renderChat();box.focus();await refresh();}
 }
 document.addEventListener('keydown',e=>{
   if(e.target.id==='ask-other'&&e.key==='Enter'&&e.target.value.trim()){e.preventDefault();$('#chat-input').value=e.target.value.trim();e.target.value='';action(sendChat);return;}
