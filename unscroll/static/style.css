@@ -90,6 +90,12 @@ kbd{font-size:12px;border:1px solid var(--line);border-radius:var(--r);padding:0
 .suggestion{padding:14px;margin:12px 0;border:1px solid var(--ink);border-radius:var(--r);background:var(--surface)}
 .suggestion .change{margin:8px 0}
 .suggestion ul{margin:4px 0 0;padding-left:18px;font-size:13px;color:var(--muted)}
+.warn-note{margin:8px 0 4px;font-size:13px}
+.approve-list{list-style:none;margin:4px 0 6px;padding:0;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:var(--r)}
+.approve-list li{padding:7px 10px;border-bottom:1px solid var(--line)}
+.approve-list li:last-child{border-bottom:0}
+.approve-list label{display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:13px}
+.approve-list small{display:block;color:var(--muted);margin-top:2px}
 .chat-log{display:flex;flex-direction:column;gap:8px;max-height:46vh;min-height:120px;overflow:auto;margin:12px 0}
 .chat-msg{max-width:88%;padding:9px 12px;border-radius:var(--r);font-size:14px;line-height:1.45;white-space:pre-wrap}
 .chat-msg.user{align-self:flex-end;background:var(--ink);color:#fff}

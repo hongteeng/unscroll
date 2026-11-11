@@ -391,18 +391,31 @@ def propose(body:Guidance=Guidance()):
     return {'message':'Category proposal queued. Review it before approval.'}
 
 
-def chat_view():
-    """The saved conversation plus a readable preview of the changes waiting for approval."""
-    pending=db.setting('chat_pending') or []
+def _filing():
+    """Titles and current primary category (or None) for every written entry."""
     with db.connect() as c:
+        names={r['id']:r['name'] for r in c.execute('SELECT id,name FROM categories')}
+        primary={r['post_id']:names.get(r['category_id']) for r in c.execute('SELECT * FROM placements WHERE is_primary=1')}
         titles={r['id']:json.loads(r['entry'])['title'] for r in c.execute('SELECT id,entry FROM posts WHERE entry IS NOT NULL')}
+    return titles,primary
+
+
+def chat_view():
+    """The saved conversation plus a readable preview of the changes waiting for approval.
+    Videos already filed somewhere else are marked with where they are now: those need explicit approval."""
+    pending=db.setting('chat_pending') or []
+    titles,primary=_filing()
     out=[]
     for ch in pending:
-        if ch['kind']=='move': label=f"Move {len(ch['entry_ids'])} save{'s' if len(ch['entry_ids'])!=1 else ''} to “{ch['name']}”"
-        elif ch['kind']=='rename': label=f"Rename “{ch['source']}” to “{ch['name']}”"
-        elif ch['kind']=='merge': label=f"Merge “{ch['source']}” into “{ch['name']}”"
-        else: label=f"Delete “{ch['source']}” if it is empty"
-        out.append({'label':label,'titles':[titles[i] for i in ch['entry_ids'] if i in titles][:6]})
+        if ch['kind']=='move':
+            items=[{'id':i,'title':titles[i],'from':primary.get(i)} for i in ch['entry_ids'] if i in titles and (primary.get(i) or '').casefold()!=ch['name'].casefold()]
+            label=f"Move {len(items)} save{'s' if len(items)!=1 else ''} to “{ch['name']}”"
+        elif ch['kind']=='merge':
+            items=[{'id':i,'title':t,'from':primary.get(i)} for i,t in titles.items() if (primary.get(i) or '').casefold()==ch['source'].casefold()]
+            label=f"Merge “{ch['source']}” into “{ch['name']}”"
+        elif ch['kind']=='rename': items=[]; label=f"Rename “{ch['source']}” to “{ch['name']}”"
+        else: items=[]; label=f"Delete “{ch['source']}” if it is empty"
+        out.append({'label':label,'to':ch['name'],'items':items})
     return {'history':db.setting('chat_history',[]) or [],'pending':out}
 
 
@@ -423,45 +436,78 @@ def chat_discard():
     return chat_view()
 
 
+class ApplyChat(BaseModel):
+    approved:list[str]=Field(default_factory=list,max_length=1000)
+
+
 @app.post('/api/categories/chat/apply')
-def chat_apply():
+def chat_apply(body:ApplyChat=ApplyChat()):
+    """Apply the pending changes. A video that already has a category only moves if the user approved it by id."""
     idle()
+    approved=set(body.approved)
+    titles,primary=_filing()
     changes=db.setting('chat_pending') or []
-    notes=[]
+    moved=[];filed=[];held=[];notes=[]
     with db.connect() as c:
         def root(name): return c.execute('SELECT id FROM categories WHERE parent_id IS NULL AND name=? COLLATE NOCASE',(name,)).fetchone()
         def leaf(name):
             row=root(name)
             if row and c.execute('SELECT 1 FROM categories WHERE parent_id=?',(row['id'],)).fetchone(): return None
             return row['id'] if row else c.execute('INSERT INTO categories(name) VALUES(?)',(name,)).lastrowid
+        def put(pid,cat):
+            c.execute('DELETE FROM placements WHERE post_id=?',(pid,))
+            c.execute('INSERT INTO placements VALUES(?,?,1)',(pid,cat))
+            c.execute("UPDATE posts SET status='categorised' WHERE id=?",(pid,))
         for ch in changes:
-            if ch['kind']=='move':
+            kind=ch['kind']
+            if kind=='move':
                 cat=leaf(ch['name'])
                 if not cat: notes.append(f"{ch['name']} has subcategories, so nothing was moved there."); continue
                 for pid in ch['entry_ids']:
-                    if not c.execute('SELECT 1 FROM posts WHERE id=?',(pid,)).fetchone(): continue
-                    c.execute('DELETE FROM placements WHERE post_id=?',(pid,))
-                    c.execute('INSERT INTO placements VALUES(?,?,1)',(pid,cat))
-                    c.execute("UPDATE posts SET status='categorised' WHERE id=?",(pid,))
-            elif ch['kind']=='rename':
+                    if pid not in titles: continue
+                    before=primary.get(pid)
+                    if (before or '').casefold()==ch['name'].casefold(): continue
+                    if before and pid not in approved: held.append((titles[pid],before)); continue
+                    put(pid,cat)
+                    (moved if before else filed).append((titles[pid],before,ch['name']))
+            elif kind=='rename':
                 row=root(ch['source'])
                 if not row: continue
                 other=root(ch['name'])
-                if other and other['id']!=row['id']: ch={**ch,'kind':'merge'}
-                else: c.execute('UPDATE categories SET name=? WHERE id=?',(ch['name'],row['id'])); continue
-            if ch['kind']=='merge':
+                if other and other['id']!=row['id']: kind='merge'
+                else: c.execute('UPDATE categories SET name=? WHERE id=?',(ch['name'],row['id'])); notes.append(f"Renamed {ch['source']} to {ch['name']}.")
+            if kind=='merge':
                 a,b=root(ch['source']),leaf(ch['name'])
                 if not a or not b or a['id']==b: continue
+                members=[pid for pid,cat in primary.items() if (cat or '').casefold()==ch['source'].casefold()]
+                if any(pid not in approved for pid in members):
+                    held.extend((titles[pid],ch['source']) for pid in members if pid in titles and pid not in approved)
+                    notes.append(f"Merge of {ch['source']} into {ch['name']} was not done because not every video in it was approved."); continue
                 c.execute('UPDATE OR IGNORE placements SET category_id=? WHERE category_id=?',(b,a['id']))
                 c.execute('DELETE FROM categories WHERE id=?',(a['id'],))
-            elif ch['kind']=='delete':
+                moved.extend((titles[pid],ch['source'],ch['name']) for pid in members if pid in titles)
+            elif kind=='delete':
                 a=root(ch['source'])
                 if a and not c.execute('SELECT 1 FROM placements WHERE category_id=?',(a['id'],)).fetchone() and not c.execute('SELECT 1 FROM categories WHERE parent_id=?',(a['id'],)).fetchone():
-                    c.execute('DELETE FROM categories WHERE id=?',(a['id'],))
+                    c.execute('DELETE FROM categories WHERE id=?',(a['id'],)); notes.append(f"Deleted the empty category {ch['source']}.")
                 elif a: notes.append(f"{ch['source']} still has saves, so it was kept.")
+    lines=['Done. Here is exactly what changed.']
+    if moved:
+        lines.append(f"Moved to a different category ({len(moved)}):")
+        lines+=[f"• {t} — {b} → {a}" for t,b,a in moved]
+    if filed:
+        lines.append(f"Filed (they had no category) ({len(filed)}):")
+        lines+=[f"• {t} → {a}" for t,_,a in filed[:12]]
+        if len(filed)>12: lines.append(f"…and {len(filed)-12} more.")
+    if held:
+        lines.append(f"Left where they were, not approved ({len(held)}):")
+        lines+=[f"• {t} — stays in {b}" for t,b in held[:20]]
+        if len(held)>20: lines.append(f"…and {len(held)-20} more.")
+    lines+=notes
+    if not (moved or filed or held or notes): lines.append('Nothing needed changing.')
     db.put_setting('chat_pending',[])
     history=db.setting('chat_history',[]) or []
-    history.append({'role':'assistant','text':'Done. '+(' '.join(notes) if notes else 'The changes are applied.')})
+    history.append({'role':'assistant','text':'\n'.join(lines)})
     db.put_setting('chat_history',history[-30:])
     return chat_view()
 

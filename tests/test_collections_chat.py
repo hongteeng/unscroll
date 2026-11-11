@@ -45,5 +45,29 @@ class CollectionAndChat(unittest.TestCase):
         self.assertEqual(done['pending'],[])
         self.assertEqual(db.tree()[0]['name'],'Communication'); self.assertEqual(db.tree()[0]['count'],2)
 
+    def test_recategorising_needs_per_video_approval_and_is_reported(self):
+        from unscroll.server import app
+        entry={'title':'Speaking drill','key_points':[],'topics':[]}
+        a=self.add(21,['Business']); b=self.add(22,['Business'])
+        for i in ('21','22'): db.update(i,entry=entry,status='written')
+        ai.place(db.post('21')); ai.place(db.post('22'))
+        db.put_setting('chat_pending',[{'kind':'move','name':'Communication','source':'','entry_ids':['21','22']}])
+        client=TestClient(app,base_url='http://127.0.0.1:8765')
+        h={'X-Unscroll-Token':client.get('/api/session').json()['token']}
+        view=client.post('/api/categories/chat/apply',json={'approved':['21']},headers=h).json()
+        names={c['name']:c['count'] for c in db.tree()}
+        self.assertEqual(names,{'Business':1,'Communication':1})
+        report=view['history'][-1]['text']
+        self.assertIn('Speaking drill — Business → Communication',report)
+        self.assertIn('stays in Business',report)
+
+    def test_unapproved_move_is_listed_with_current_category_in_preview(self):
+        from unscroll.server import chat_view
+        self.add(23,['Business']); db.update('23',entry={'title':'Sales tips','key_points':[],'topics':[]},status='written')
+        ai.place(db.post('23'))
+        db.put_setting('chat_pending',[{'kind':'move','name':'Communication','source':'','entry_ids':['23']}])
+        item=chat_view()['pending'][0]['items'][0]
+        self.assertEqual((item['title'],item['from']),('Sales tips','Business'))
+
 
 if __name__=='__main__': unittest.main()
