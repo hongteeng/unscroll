@@ -630,6 +630,18 @@ def rename(ident:int,body:Rename):
     return {'message':'Category renamed.'}
 
 
+@app.post('/api/categories/{ident}/delete')
+def delete_empty_category(ident:int):
+    """Delete a category, but only while it holds no videos and has no subcategories."""
+    with db.connect() as c:
+        row=c.execute('SELECT name FROM categories WHERE id=?',(ident,)).fetchone()
+        if not row: raise HTTPException(404,'Category not found')
+        if c.execute('SELECT 1 FROM placements WHERE category_id=?',(ident,)).fetchone() or c.execute('SELECT 1 FROM categories WHERE parent_id=?',(ident,)).fetchone():
+            raise HTTPException(409,'This category still has videos or subcategories, so it was not deleted.')
+        c.execute('DELETE FROM categories WHERE id=?',(ident,))
+    return {'message':f"Deleted the empty category {row['name']}."}
+
+
 class Merge(BaseModel):
     target_id:int
 

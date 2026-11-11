@@ -98,5 +98,16 @@ class CollectionAndChat(unittest.TestCase):
         bad=client.post('/api/posts/move-many',json={'ids':['31'],'category_id':9999},headers=h)
         self.assertGreaterEqual(bad.status_code,400)
 
+    def test_only_empty_categories_can_be_deleted(self):
+        from unscroll.server import app
+        self.add(41); db.update('41',entry={'title':'T','key_points':[],'topics':[]},status='written')
+        full=db.ensure_category('Full'); empty=db.ensure_category('Empty'); ai.place  # noqa
+        with db.connect() as c: c.execute('INSERT INTO placements VALUES(?,?,1)',('41',full))
+        client=TestClient(app,base_url='http://127.0.0.1:8765')
+        h={'X-Unscroll-Token':client.get('/api/session').json()['token']}
+        self.assertEqual(client.post(f'/api/categories/{full}/delete',json={},headers=h).status_code,409)
+        self.assertEqual(client.post(f'/api/categories/{empty}/delete',json={},headers=h).status_code,200)
+        self.assertEqual([c['name'] for c in db.tree()],['Full'])
+
 
 if __name__=='__main__': unittest.main()

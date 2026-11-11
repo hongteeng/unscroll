@@ -237,3 +237,4 @@ input[type=checkbox]{accent-color:var(--ink)}
 #plan-details summary{cursor:pointer;color:var(--muted);font-size:13px}
 .ask-other{display:flex;gap:14px;align-items:center;padding:12px 4px}
 .ask-other input{flex:1;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)}
+.cat-del{color:var(--alert);font-weight:600;text-decoration:underline;cursor:pointer}
