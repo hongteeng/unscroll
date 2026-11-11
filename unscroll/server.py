@@ -480,11 +480,14 @@ def chat_turn(body:ChatMessage):
     view=chat_view()
     intent=ai.intent(message,view['pending'],db.setting('chat_pending') or [],_filing()[0])
     history=db.setting('chat_history',[]) or []
+    titles=_filing()[0]; low=message.casefold()
+    # Only keep-out ids whose title (or id) the message really mentions: the model cannot invent exceptions.
+    keep=[i for i in intent.keep_ids if i in titles and (i in message or any(w in low for w in re.findall(r'[a-z0-9.]{4,}',titles[i].casefold())))]
     if intent.action=='approve' and view['pending']:
         db.put_setting('chat_history',(history+[{'role':'user','text':message}])[-30:])
-        return _apply_pending(intent.keep_ids)
+        return _apply_pending(keep)
     ai.chat(message)
-    if intent.action=='build':
+    if intent.action=='build' or (intent.action=='approve' and not view['pending']):   # no plan yet: build one, never apply
         changes=ai.build_plan()
         history=db.setting('chat_history',[]) or []
         history.append({'role':'assistant','text':_proposal_text(chat_view()) if changes else 'I could not find any moves for that. Tell me more about what you want.'})
