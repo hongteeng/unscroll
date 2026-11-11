@@ -12,10 +12,13 @@ OLD=$(lsof -ti tcp:8765 -sTCP:LISTEN 2>/dev/null || true)
 if [ -n "$OLD" ] && ps -o command= -p $OLD | grep -q 'unscroll.server'; then
   echo 'Stopping the running helper...'
   kill $OLD
-  for i in 1 2 3 4 5 6 7 8 9 10; do
-    lsof -ti tcp:8765 -sTCP:LISTEN >/dev/null 2>&1 || break
+  # Wait for the old process itself to exit (not just its port): it holds app.lock until it is gone.
+  for i in $(seq 1 15); do
+    kill -0 $OLD 2>/dev/null || break
     sleep 1
   done
+  # Still alive after 15s (finishing a job)? Force it; unfinished jobs go back to the queue on next start.
+  if kill -0 $OLD 2>/dev/null; then kill -9 $OLD; sleep 1; fi
 fi
 echo 'Unscroll local helper is starting. Open your library from the Chrome extension.'
 echo 'Keep this Terminal open for manual operation, or enable automatic startup.'
