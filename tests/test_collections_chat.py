@@ -69,5 +69,17 @@ class CollectionAndChat(unittest.TestCase):
         item=chat_view()['pending'][0]['items'][0]
         self.assertEqual((item['title'],item['from']),('Sales tips','Business'))
 
+    def test_user_can_move_selected_cards_to_a_category(self):
+        from unscroll.server import app
+        for n in (31,32): self.add(n,['Business']); db.update(str(n),entry={'title':'T','key_points':[],'topics':[]},status='written'); ai.place(db.post(str(n)))
+        client=TestClient(app,base_url='http://127.0.0.1:8765')
+        h={'X-Unscroll-Token':client.get('/api/session').json()['token']}
+        r=client.post('/api/posts/move-many',json={'ids':['31','32'],'name':'Communication'},headers=h).json()
+        self.assertEqual(r['moved'],2)
+        counts={c['name']:c['count'] for c in db.tree()}
+        self.assertEqual(counts['Communication'],2); self.assertEqual(counts['Business'],0)
+        bad=client.post('/api/posts/move-many',json={'ids':['31'],'category_id':9999},headers=h)
+        self.assertGreaterEqual(bad.status_code,400)
+
 
 if __name__=='__main__': unittest.main()

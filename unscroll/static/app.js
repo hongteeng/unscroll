@@ -53,7 +53,8 @@ function renderCards(){
   }).join(''):`<div class="empty"><h3>${state.data.counts.total?'No matches':'No saves yet'}</h3><p>${state.data.counts.total?'No posts match these filters. Try a broader search or another category.':'Import your TikTok Favorite Videos file, or paste post links, to get started.'}</p>${state.data.counts.total?'':'<button class="button primary" data-import>Import saves</button>'}</div>`;
   updateSelection();
 }
-function updateSelection(){const n=state.selected.size;$('#selection-bar').hidden=!n;$('#selection-count').textContent=`${n} post${n===1?'':'s'} selected`;$('#process-selected').hidden=!n;}
+function renderMoveTargets(){const sel=$('#move-target'),keep=sel.value;sel.innerHTML='<option value="">Move to…</option>'+leaves().map(l=>`<option value="${l.id}">${esc(l.parent?l.parent+' / '+l.name:l.name)}</option>`).join('')+'<option value="new">New category…</option>';if([...sel.options].some(o=>o.value===keep))sel.value=keep;}
+function updateSelection(){const n=state.selected.size;renderMoveTargets();$('#selection-bar').hidden=!n;$('#selection-count').textContent=`${n} post${n===1?'':'s'} selected`;$('#process-selected').hidden=!n;}
 async function loadPosts(){
   const params=new URLSearchParams({q:$('#search').value,category:state.category,status:state.status,creator:$('#creator').value,kind:$('#kind').value,after:$('#after').value,before:$('#before').value});
   const result=await api('posts?'+params);state.posts=result.posts;$('#search-warning').textContent=result.warning;renderCards();
@@ -145,6 +146,7 @@ document.addEventListener('click',event=>action(async()=>{
     toast(r.message);return refresh();
   }
   if(b.id==='undo-removal'){toast((await api('imports/undo',{})).message);return refresh();}
+  if(b.id==='move-selected'){const v=$('#move-target').value;if(!v)return toast('Choose where to move the selected cards.');let body={ids:[...state.selected]};if(v==='new'){const name=prompt('Name for the new category:');if(!name||!name.trim())return;body.name=name.trim();}else body.category_id=Number(v);const r=await api('posts/move-many',body);toast(r.message);state.selected.clear();$('#move-target').value='';await refresh();return;}
   if(b.id==='download-selected'){const r=await api('download',{ids:[...state.selected]});toast(`${r.queued} selected downloads queued.`);return refresh();}
   if(b.id==='pause'||b.id==='resume'){toast((await api(b.id,{})).message);return refresh();}
   if(b.id==='suggest-cats'){renderChat();show('#chat-dialog');return $('#chat-input').focus();}

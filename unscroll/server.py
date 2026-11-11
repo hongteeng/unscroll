@@ -338,6 +338,40 @@ def review(ident:str):
     return {'reviewed':not p['reviewed']}
 
 
+class MoveMany(BaseModel):
+    ids:list[str]=Field(min_length=1,max_length=500)
+    category_id:int|None=None
+    name:str=Field(default='',max_length=80)
+
+
+@app.post('/api/posts/move-many')
+def move_many(body:MoveMany):
+    """The user's own move: put the selected cards in one category. No AI involved, so no extra approval step."""
+    with db.connect() as c:
+        if body.category_id is not None:
+            valid={s['id'] for r in db.tree() for s in r['children']}|{r['id'] for r in db.tree() if not r['children']}
+            if body.category_id not in valid: raise ValueError('Choose a category from your list.')
+            cat=body.category_id
+        else:
+            name=body.name.strip()
+            if not name: raise ValueError('Choose a category, or type a name for a new one.')
+            cat=db.ensure_category(name)
+            if not cat: raise ValueError(f'{name} has subcategories. Choose one of them instead.')
+        label=c.execute('SELECT name FROM categories WHERE id=?',(cat,)).fetchone()['name']
+        running={r[0] for r in c.execute("SELECT post_id FROM jobs WHERE state='running' AND post_id IS NOT NULL")}
+        moved=skipped=0
+        for pid in dict.fromkeys(body.ids):
+            row=c.execute('SELECT entry IS NOT NULL AS has_entry FROM posts WHERE id=?',(pid,)).fetchone()
+            if not row or pid in running: skipped+=1; continue
+            c.execute('DELETE FROM placements WHERE post_id=?',(pid,))
+            c.execute('INSERT INTO placements VALUES(?,?,1)',(pid,cat))
+            if row['has_entry']: c.execute("UPDATE posts SET status='categorised' WHERE id=?",(pid,))
+            moved+=1
+    msg=f"Moved {moved} card{'s' if moved!=1 else ''} to {label}."
+    if skipped: msg+=f" {skipped} could not move because it is being processed right now."
+    return {'message':msg,'moved':moved}
+
+
 @app.post('/api/posts/{ident}/move')
 def move(ident:str,body:MoveRequest):
     idle(); get_post(ident)
