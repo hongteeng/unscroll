@@ -204,7 +204,7 @@ def chat(message):
     tree=db.tree(); lib=_library()
     system=('You help a person organise their saved TikTok videos into categories. Talk to them normally: answer questions, suggest categories, '
             'and say which kinds of videos would move where. Their library is below as reference data (category counts, then each save with its current category). '
-            'Nothing you say changes anything. When they are happy with the idea they press "Build plan" in the app, review the exact list of moves, and approve it.\n\n'
+            'Nothing you say changes anything by itself: when they want moves, the app lays out the exact list of videos for them to approve or edit, and they can reply to adjust it. Never claim that anything was moved.\n\n'
             'Categories now: '+json.dumps([{'name':r['name'],'saves':r['count']} for r in tree],ensure_ascii=False)+'\n'
             'Saves (id omitted): '+json.dumps([{'title':x['title'],'in':x['filed_under']} for x in lib],ensure_ascii=False))
     turns=[{'role':m['role'],'content':m['text']} for m in history[-14:] if m['role'] in ('user','assistant') and not m['text'].startswith(('This is the plan','Plan approved'))]
@@ -215,8 +215,26 @@ def chat(message):
         else: msgs.append(dict(t))
     reply=converse(system,msgs)
     db.put_setting('chat_history',(history+[{'role':'user','text':message},{'role':'assistant','text':reply}])[-30:])
-    db.put_setting('chat_pending',[])
     return reply
+
+
+class Intent(BaseModel):
+    model_config=ConfigDict(extra='ignore')
+    action: Literal['talk','build','approve']
+    keep_ids: list[str] = Field(default_factory=list,max_length=200)
+
+
+def intent(message,pending_view,pending,titles):
+    """Read what the person's latest message is for. approve only counts when a plan is on screen and the message clearly consents to it."""
+    plan=[{'id':i,'title':titles.get(i,''),'to':ch['name']} for ch in pending if ch['kind']=='move' for i in ch['entry_ids']]
+    history=(db.setting('chat_history',[]) or [])[-4:]
+    return ask('chat',('Classify the person\'s latest message about organising their saved videos. '
+        '"build": they want categories or moves proposed or revised (including accepting the assistant\'s suggestion, or asking for changes to the plan). '
+        '"approve": a plan is on screen (plan is not empty) AND the message clearly approves it in words, e.g. "approved", "yes do it", "the rest are approved". '
+        'For approve, put in keep_ids the ids of plan videos the person says should stay where they are (match their words to titles). '
+        'keep_ids come only from the latest message, never from earlier ones. With no plan on screen, a message like "ok", "go", "do it" or "build now" after the assistant suggested something means "build", never "approve". '
+        'A vague message is never "approve". Everything else is "talk".'),
+        {'message':message,'plan':plan,'recent':history},Intent)
 
 
 class Blueprint(BaseModel):

@@ -90,16 +90,16 @@ function renderManage(){
 function renderChat(){
   const c=state.data.chat||{history:[],pending:[]};
   state.chatSig=JSON.stringify(state.data.chat);
-  $('#chat-log').innerHTML=c.history.length?c.history.map(m=>`<div class="chat-msg ${m.role}">${esc(m.text)}</div>`).join(''):'<p class="muted-note">Chat about how you want your saves organised, for example “propose categories for my library”. When you like the idea, press Build plan to get the exact list of moves. Nothing changes until you approve that list.</p>';
+  $('#chat-log').innerHTML=c.history.length?c.history.map(m=>`<div class="chat-msg ${m.role}">${esc(m.text)}</div>`).join(''):'<p class="muted-note">Chat about how you want your saves organised, for example “propose categories for my library”. I will lay out the exact videos that would move. Nothing changes until you approve, and you can reply to adjust it.</p>';
   if(c.pending.some(p=>!Array.isArray(p.items))){$('#chat-pending').innerHTML='<div class="banner">The helper is running an older version. Close it (Ctrl+C) and run Start.command again before applying changes.</div>';return;}
-  $('#chat-pending').innerHTML=c.pending.length?`<div class="suggestion"><strong>The plan. Nothing changes until you approve it.</strong>${c.pending.map(p=>`<div class="change"><span>${esc(p.label)}${p.new_category?` (new category)`:''}</span>${p.items.length?`<ul class="approve-list">${p.items.slice(0,40).map(x=>`<li>${esc(x.title)}<small>${esc(x.from||'no category')} → ${esc(p.to)}</small></li>`).join('')}</ul>${p.items.length>40?`<p class="muted-note">…and ${p.items.length-40} more.</p>`:''}`:''}</div>`).join('')}<div class="modal-actions"><button class="text-btn" data-chat-discard>Discard plan</button><button class="button primary" data-chat-apply>Approve plan and apply</button></div></div>`:'';
+  $('#chat-pending').innerHTML=c.pending.length?`<div class="suggestion"><strong>The plan. Nothing changes until you approve it.</strong>${c.pending.map(p=>`<div class="change"><span>${esc(p.label)}${p.new_category?` (new category)`:''}</span>${p.items.length?`<ul class="approve-list">${p.items.slice(0,40).map(x=>`<li>${esc(x.title)}<small>${esc(x.from||'no category')} → ${esc(p.to)}</small> <button class="text-btn" data-chat-drop="${esc(x.id)}">Keep here</button></li>`).join('')}</ul>${p.items.length>40?`<p class="muted-note">…and ${p.items.length-40} more.</p>`:''}`:''}</div>`).join('')}<div class="modal-actions"><button class="text-btn" data-chat-discard>Discard plan</button><button class="button primary" data-chat-apply>Approve all</button></div></div>`:'';
   $('#chat-log').scrollTop=$('#chat-log').scrollHeight;
 }
 async function sendChat(){
   const box=$('#chat-input'),message=box.value.trim();if(!message||state.chatBusy)return;
   const send=$('#chat-send');state.chatBusy=true;send.disabled=box.disabled=true;
   const log=$('#chat-log');
-  log.insertAdjacentHTML('beforeend',`<div class="chat-msg user">${esc(message)}</div><div class="chat-msg assistant" id="chat-thinking">Thinking… this can take up to a minute with a big library.</div>`);
+  log.insertAdjacentHTML('beforeend',`<div class="chat-msg user">${esc(message)}</div><div class="chat-msg assistant" id="chat-thinking">Thinking… building a plan can take a minute or two with a big library.</div>`);
   log.scrollTop=log.scrollHeight;
   try{state.data.chat=await api('categories/chat',{message});box.value='';}
   catch(e){
@@ -107,13 +107,6 @@ async function sendChat(){
     state.data.chat={...(state.data.chat||{pending:[]}),history:[...(state.data.chat?.history||[]),{role:'user',text:message},{role:'assistant',text:'That did not go through: '+(e.message||'unknown error')}]};
   }
   finally{state.chatBusy=false;send.disabled=box.disabled=false;renderChat();box.focus();}
-}
-async function buildPlan(){
-  if(state.chatBusy)return;state.chatBusy=true;const btn=$('#chat-plan');btn.disabled=true;
-  const log=$('#chat-log');log.insertAdjacentHTML('beforeend','<div class="chat-msg assistant">Building the plan from our conversation… this can take a minute or two with a big library.</div>');log.scrollTop=log.scrollHeight;
-  try{state.data.chat=await api('categories/chat/plan',{});}
-  catch(e){state.data.chat={...(state.data.chat||{pending:[]}),history:[...(state.data.chat?.history||[]),{role:'assistant',text:'That did not go through: '+(e.message||'unknown error')}]};}
-  finally{state.chatBusy=false;btn.disabled=false;renderChat();}
 }
 document.addEventListener('keydown',e=>{if(e.target.id==='chat-input'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();action(sendChat);}});
 function renderJobs(){
@@ -158,8 +151,8 @@ document.addEventListener('click',event=>action(async()=>{
   if(b.id==='pause'||b.id==='resume'){toast((await api(b.id,{})).message);return refresh();}
   if(b.id==='suggest-cats'){renderChat();show('#chat-dialog');return $('#chat-input').focus();}
   if(b.id==='chat-send')return sendChat();
-  if(b.id==='chat-plan')return buildPlan();
   if(b.hasAttribute('data-chat-apply')){state.data.chat=await api('categories/chat/apply',{});await refresh();return renderChat();}
+  if(b.hasAttribute('data-chat-drop')){state.data.chat=await api('categories/chat/drop',{id:b.dataset.chatDrop});return renderChat();}
   if(b.hasAttribute('data-chat-discard')){state.data.chat=await api('categories/chat/discard',{});return renderChat();}
   if(b.dataset.tab){state.tab=b.dataset.tab;return renderDetail();}
   if(b.hasAttribute('data-select-detail')){const id=state.active.id;state.selected.has(id)?state.selected.delete(id):state.selected.add(id);renderCards();return renderDetail();}

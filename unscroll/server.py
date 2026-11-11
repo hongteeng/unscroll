@@ -459,7 +459,7 @@ def chat_view():
 
 def _proposal_text(view):
     """Plain-text listing of everything proposed, added to the chat after each turn."""
-    lines=['This is the plan. Nothing has changed yet. Press “Approve plan and apply” below to carry it out, or Discard to drop it:']
+    lines=['Here is the plan. Nothing has changed yet. Approve it below, take out any video you want to keep where it is, or just tell me what to change:']
     for p in view['pending']:
         lines.append(f"• {p['label']}"+(f" (creates the new category “{p['new_category']}”)" if p['new_category'] else ''))
         lines+=[f"    – {x['title']} ({x['from'] or 'no category'} → {p['to']})" for x in p['items'][:15]]
@@ -473,20 +473,22 @@ class ChatMessage(BaseModel):
 
 @app.post('/api/categories/chat')
 def chat_turn(body:ChatMessage):
+    """One user message. Claude answers like in any chat; the same message may also ask for a plan or approve the one on screen.
+    Moves happen only when a plan is on screen and the person's own message approves it."""
     from . import ai
-    ai.chat(body.message.strip())
-    return chat_view()
-
-
-@app.post('/api/categories/chat/plan')
-def chat_plan():
-    """Build the concrete list of moves from the conversation. Applies nothing."""
-    from . import ai
-    changes=ai.build_plan()
-    history=db.setting('chat_history',[]) or []
+    message=body.message.strip()
     view=chat_view()
-    history.append({'role':'assistant','text':_proposal_text(view) if changes else 'I could not find any moves to propose from that conversation. Tell me more about what you want, then build the plan again.'})
-    db.put_setting('chat_history',history[-30:])
+    intent=ai.intent(message,view['pending'],db.setting('chat_pending') or [],_filing()[0])
+    history=db.setting('chat_history',[]) or []
+    if intent.action=='approve' and view['pending']:
+        db.put_setting('chat_history',(history+[{'role':'user','text':message}])[-30:])
+        return _apply_pending(intent.keep_ids)
+    ai.chat(message)
+    if intent.action=='build':
+        changes=ai.build_plan()
+        history=db.setting('chat_history',[]) or []
+        history.append({'role':'assistant','text':_proposal_text(chat_view()) if changes else 'I could not find any moves for that. Tell me more about what you want.'})
+        db.put_setting('chat_history',history[-30:])
     return chat_view()
 
 
@@ -500,12 +502,30 @@ class ApplyChat(BaseModel):
     pass
 
 
+class DropItem(BaseModel):
+    id:str
+
+
 @app.post('/api/categories/chat/apply')
 def chat_apply(body:ApplyChat=ApplyChat()):
-    """Apply the whole pending plan. Pressing Apply is the user's approval of the plan; the AI itself can never call this."""
+    """Apply the pending plan. Called only when the person presses Approve, or types a clear approval of the plan shown to them."""
+    return _apply_pending()
+
+
+@app.post('/api/categories/chat/drop')
+def chat_drop(body:DropItem):
+    """Take one video out of the pending plan so it stays where it is."""
+    plan=db.setting('chat_pending') or []
+    for ch in plan: ch['entry_ids']=[i for i in ch['entry_ids'] if i!=body.id]
+    db.put_setting('chat_pending',[ch for ch in plan if ch['kind']!='move' or ch['entry_ids']])
+    return chat_view()
+
+
+def _apply_pending(keep_out=()):
     idle()
     titles,primary=_filing()
-    changes=db.setting('chat_pending') or []
+    keep_out=set(keep_out)
+    changes=[dict(ch,entry_ids=[i for i in ch['entry_ids'] if i not in keep_out]) for ch in (db.setting('chat_pending') or [])]
     moved=[];filed=[];notes=[]
     with db.connect() as c:
         def root(name): return c.execute('SELECT id FROM categories WHERE parent_id IS NULL AND name=? COLLATE NOCASE',(name,)).fetchone()
