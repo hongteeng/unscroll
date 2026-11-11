@@ -197,7 +197,7 @@ def state():
         counts['total']=c.execute('SELECT COUNT(*) FROM posts').fetchone()[0]
         counts['ready']=c.execute('SELECT COUNT(*) FROM posts WHERE entry IS NOT NULL').fetchone()[0]
         counts['reviewed']=c.execute('SELECT COUNT(*) FROM posts WHERE reviewed=1').fetchone()[0]
-        jobs=[dict(r) for r in c.execute("SELECT j.*,p.caption FROM jobs j LEFT JOIN posts p ON p.id=j.post_id WHERE j.state IN ('queued','running','failed') ORDER BY j.id DESC LIMIT 100")]
+        jobs=[dict(r) for r in c.execute("SELECT j.*,p.caption FROM jobs j LEFT JOIN posts p ON p.id=j.post_id WHERE j.state IN ('queued','running','failed') ORDER BY CASE j.state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, j.id LIMIT 100")]
         usage=dict(c.execute('SELECT COALESCE(SUM(input_tokens),0) input_tokens, COALESCE(SUM(output_tokens),0) output_tokens FROM usage').fetchone())
         job_counts={r[0]:r[1] for r in c.execute('SELECT state,COUNT(*) FROM jobs GROUP BY state')}
         creators=[r[0] for r in c.execute("SELECT DISTINCT creator FROM posts WHERE creator!='' ORDER BY creator")]
