@@ -134,7 +134,23 @@ async function captureChatInPage(){
         if(POST.test(u.pathname)||SHORT(h)||(/^(www\.)?tiktok\.com$/.test(h)&&u.pathname.startsWith('/t/')))found.set(u.origin+u.pathname,{url:u.origin+u.pathname,source:'chat'});
       }catch{}
     };
+    // Shared videos are cards with no link in the page. TikTok's own page code holds each card's post id in its React props
+    // (found by looking at the card's fiber), so read it from there. This needs the page's main world, not the extension's.
+    const seenCards=new WeakSet();let cardCount=0;
+    const cardId=node=>{
+      const key=Object.keys(node).find(k=>k.startsWith('__reactFiber$'));
+      for(let f=key?node[key]:null,i=0;f&&i<12;f=f.return,i++){
+        const id=f.memoizedProps?.itemId;
+        if(typeof id==='string'||typeof id==='number'){const t=String(id);if(/^\d{15,25}$/.test(t))return t;}
+      }
+      return '';
+    };
     const scan=()=>{
+      document.querySelectorAll('[data-e2e="dm-new-shared-video"]').forEach(card=>{
+        if(!seenCards.has(card)){seenCards.add(card);cardCount++;}
+        const id=cardId(card);
+        if(id)found.set('card:'+id,{url:'https://www.tiktok.com/@/video/'+id,source:'chat'});
+      });
       document.querySelectorAll('a[href]').forEach(a=>take(a.href));
       // Shared posts may show only as link text. Only URLs are matched; nothing else from the text is kept.
       (document.body.innerText.match(TEXT)||[]).forEach(t=>take(t));
@@ -163,9 +179,11 @@ async function captureChatInPage(){
       const moved=pane.scrollTop!==top||pane.scrollHeight!==height;
       idle=(found.size===before&&loaded()===items&&!moved)?idle+1:(found.size===before&&loaded()===items?idle+0.5:0);
     }
-    const cards=[...document.querySelectorAll('[data-e2e="dm-new-shared-video"]')];
-    const stats={cards:cards.length,cardsWithLink:cards.filter(c=>c.querySelector(LINKS)).length,items:loaded()};
-    return {posts:[...found.values()],stats};
+    const stats={cards:cardCount,readable:[...found.keys()].filter(k=>k.startsWith('card:')).length,items:loaded()};
+    // The same post can appear as a card and as a link: keep one entry per post id.
+    const byId=new Map();
+    for(const p of found.values()){const m=p.url.match(/\/(?:video|photo|share\/video|share\/photo)\/(\d+)/);byId.set(m?m[1]:p.url,p);}
+    return {posts:[...byId.values()],stats};
   }catch(e){return {error:e.message||'Could not read this chat.'};}
 }
 let stopped=false;
@@ -277,11 +295,11 @@ async function readChat(){
     const u=new URL(tab.url||'');
     if(u.protocol!=='https:'||!(u.hostname==='www.tiktok.com'||u.hostname==='tiktok.com'))throw new Error('Open a conversation in TikTok Messages on www.tiktok.com first.');
     el('status').textContent='Reading the chat… scrolling up to load older messages.';
-    const res=(await chrome.scripting.executeScript({target:{tabId:tab.id},func:captureChatInPage}))[0]?.result;
+    const res=(await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:captureChatInPage}))[0]?.result;
     if(!res)throw new Error('Chrome could not read this page. Refresh it and try again.');
     if(res.error)throw new Error(res.error);
     if(!res.posts.length)throw new Error('No TikTok post links found in this chat. If posts show only as cards, tell me and I will adapt the reader.');
-    if(!confirm(`Found ${res.posts.length} TikTok post link${res.posts.length===1?'':'s'} in this chat${res.stats?.cards>res.posts.length?` (the chat shows ${res.stats.cards} shared posts, ${res.stats.cards-res.stats.cardsWithLink} of them with no readable link)`:''}. Add the new ones to Unscroll? Only the links are saved, not the messages.`)){el('status').textContent='Cancelled. Nothing was added.';return;}
+    if(!confirm(`Found ${res.posts.length} TikTok post link${res.posts.length===1?'':'s'} in this chat${res.stats?.cards>res.stats?.readable?` (the chat shows ${res.stats.cards} shared posts, ${res.stats.cards-res.stats.readable} of them I could not read)`:''}. Add the new ones to Unscroll? Only the links are saved, not the messages.`)){el('status').textContent='Cancelled. Nothing was added.';return;}
     const r=await fetch('http://127.0.0.1:8765/api/capture',{method:'POST',headers:{'Content-Type':'application/json','X-Unscroll-Token':token},body:JSON.stringify({posts:res.posts})});
     const data=await r.json();if(!r.ok)throw new Error(data.detail||'Import failed.');
     el('status').textContent=`${res.posts.length} links found${res.stats?.cards?` of ${res.stats.cards} shared posts`:''} · ${data.added} new · ${data.skipped} already in your library.${data.errors?.length?' Some links could not be used: '+data.errors.slice(0,2).join(' '):''} Open your library to process new posts.`;
