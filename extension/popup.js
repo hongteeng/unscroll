@@ -140,14 +140,21 @@ async function captureChatInPage(){
       (document.body.innerText.match(TEXT)||[]).forEach(t=>take(t));
     };
     const wait=()=>new Promise(r=>setTimeout(r,1400));
-    // The message pane is the scrollable element holding the most post links.
+    // The message pane is the scrollable element with the most post links; if none has links yet, the biggest one.
+    const LINKS='a[href*="/video/"],a[href*="/photo/"],a[href*="/share/"],a[href*="tiktok.com/t/"],a[href*="vm.tiktok.com"]';
     const scrollers=[...document.querySelectorAll('*')].filter(n=>n.scrollHeight>n.clientHeight+40&&/auto|scroll/.test(getComputedStyle(n).overflowY));
-    const pane=scrollers.sort((a,b)=>b.querySelectorAll('a[href*="/video/"],a[href*="/photo/"],a[href*="/share/"]').length-a.querySelectorAll('a[href*="/video/"],a[href*="/photo/"],a[href*="/share/"]').length)[0]||document.scrollingElement;
-    scan();let idle=0;
-    for(let i=0;i<120&&idle<4;i++){
-      const before=found.size;
-      pane.scrollTo(0,0);await wait();scan();
-      idle=found.size===before?idle+1:0;
+    const pane=scrollers.sort((a,b)=>b.querySelectorAll(LINKS).length-a.querySelectorAll(LINKS).length||(b.clientHeight*b.clientWidth)-(a.clientHeight*a.clientWidth))[0]||document.scrollingElement;
+    scan();
+    // TikTok loads older messages only when you scroll toward them. Sitting at the very top fires no new scroll event, so step up
+    // in screen-sized moves (this also works when the list is laid out bottom-up) and keep going until nothing new arrives.
+    let idle=0;
+    for(let i=0;i<400&&idle<6;i++){
+      const before=found.size,height=pane.scrollHeight,top=pane.scrollTop;
+      pane.dispatchEvent(new WheelEvent('wheel',{deltaY:-400,bubbles:true,cancelable:true}));
+      pane.scrollBy(0,-Math.max(300,pane.clientHeight*.85));
+      await wait();scan();
+      const moved=pane.scrollTop!==top||pane.scrollHeight!==height;
+      idle=(found.size===before&&!moved)?idle+1:(found.size===before?idle+0.5:0);
     }
     return {posts:[...found.values()]};
   }catch(e){return {error:e.message||'Could not read this chat.'};}
