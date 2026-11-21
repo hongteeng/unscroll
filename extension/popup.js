@@ -117,8 +117,43 @@ function detectCollectionName(){
   const heading=[...document.querySelectorAll('h1,h2,[data-e2e*="collection"]')].map(n=>n.textContent.trim()).find(t=>t&&t.length<=80&&key(t)===key(plain));
   return (heading||plain).slice(0,80);
 }
+// Runs inside the TikTok tab. Collects the TikTok post links shared in the open chat; message text is never read or returned.
+async function captureChatInPage(){
+  try{
+    if(!location.pathname.startsWith('/messages'))throw new Error('Open a conversation in TikTok Messages (tiktok.com/messages) first.');
+    const POST=/^\/@[^/]*\/(video|photo)\/(\d+)|^\/share\/(video|photo)\/(\d+)|^\/v\/(\d+)/;
+    const SHORT=h=>h==='vm.tiktok.com'||h==='vt.tiktok.com';
+    const TEXT=/https:\/\/(?:[\w-]+\.)?tiktok(?:v)?\.com\/[^\s<>"']+/gi;
+    const found=new Map();
+    const take=raw=>{
+      try{
+        const u=new URL(raw,location.href);
+        if(u.protocol!=='https:'||u.port)return;
+        const h=u.hostname,tiktok=h==='tiktok.com'||h==='tiktokv.com'||h.endsWith('.tiktok.com')||h.endsWith('.tiktokv.com');
+        if(!tiktok)return;
+        if(POST.test(u.pathname)||SHORT(h)||(/^(www\.)?tiktok\.com$/.test(h)&&u.pathname.startsWith('/t/')))found.set(u.origin+u.pathname,{url:u.origin+u.pathname,source:'chat'});
+      }catch{}
+    };
+    const scan=()=>{
+      document.querySelectorAll('a[href]').forEach(a=>take(a.href));
+      // Shared posts may show only as link text. Only URLs are matched; nothing else from the text is kept.
+      (document.body.innerText.match(TEXT)||[]).forEach(t=>take(t));
+    };
+    const wait=()=>new Promise(r=>setTimeout(r,1400));
+    // The message pane is the scrollable element holding the most post links.
+    const scrollers=[...document.querySelectorAll('*')].filter(n=>n.scrollHeight>n.clientHeight+40&&/auto|scroll/.test(getComputedStyle(n).overflowY));
+    const pane=scrollers.sort((a,b)=>b.querySelectorAll('a[href*="/video/"],a[href*="/photo/"],a[href*="/share/"]').length-a.querySelectorAll('a[href*="/video/"],a[href*="/photo/"],a[href*="/share/"]').length)[0]||document.scrollingElement;
+    scan();let idle=0;
+    for(let i=0;i<120&&idle<4;i++){
+      const before=found.size;
+      pane.scrollTo(0,0);await wait();scan();
+      idle=found.size===before?idle+1:0;
+    }
+    return {posts:[...found.values()]};
+  }catch(e){return {error:e.message||'Could not read this chat.'};}
+}
 let stopped=false;
-const buttons=['check','continue','rescan'];
+const buttons=['check','continue','rescan','read-chat'];
 const postId=p=>p.url.match(/\/(?:video|photo)\/(\d+)/)?.[1];
 async function run(mode){
   el('status').textContent='Working…';
@@ -215,6 +250,29 @@ async function run(mode){
     el('token').disabled=el('collection').disabled=false;el('stop').hidden=true;
   }
 }
+async function readChat(){
+  el('status').textContent='Working…';
+  buttons.forEach(id=>el(id).disabled=true);el('token').disabled=true;
+  try{
+    const token=el('token').value.trim();
+    if(!token)throw new Error('Paste the pairing token from Unscroll Settings first.');
+    await chrome.storage.local.set({unscrollToken:token});
+    const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+    const u=new URL(tab.url||'');
+    if(u.protocol!=='https:'||!(u.hostname==='www.tiktok.com'||u.hostname==='tiktok.com'))throw new Error('Open a conversation in TikTok Messages on www.tiktok.com first.');
+    el('status').textContent='Reading the chat… scrolling up to load older messages.';
+    const res=(await chrome.scripting.executeScript({target:{tabId:tab.id},func:captureChatInPage}))[0]?.result;
+    if(!res)throw new Error('Chrome could not read this page. Refresh it and try again.');
+    if(res.error)throw new Error(res.error);
+    if(!res.posts.length)throw new Error('No TikTok post links found in this chat. If posts show only as cards, tell me and I will adapt the reader.');
+    if(!confirm(`Found ${res.posts.length} TikTok post link${res.posts.length===1?'':'s'} in this chat. Add the new ones to Unscroll? Only the links are saved, not the messages.`)){el('status').textContent='Cancelled. Nothing was added.';return;}
+    const r=await fetch('http://127.0.0.1:8765/api/capture',{method:'POST',headers:{'Content-Type':'application/json','X-Unscroll-Token':token},body:JSON.stringify({posts:res.posts})});
+    const data=await r.json();if(!r.ok)throw new Error(data.detail||'Import failed.');
+    el('status').textContent=`${res.posts.length} links found · ${data.added} new · ${data.skipped} already in your library.${data.errors?.length?' Some links could not be used: '+data.errors.slice(0,2).join(' '):''} Open your library to process new posts.`;
+  }catch(e){el('status').textContent=e.message==='Failed to fetch'?'Could not reach Unscroll. Start the local helper and try again.':e.message;}
+  finally{buttons.forEach(id=>el(id).disabled=false);el('token').disabled=false;}
+}
+el('read-chat').addEventListener('click',readChat);
 el('check').addEventListener('click',()=>run('check'));
 el('continue').addEventListener('click',()=>run('continue'));
 el('rescan').addEventListener('click',()=>run('rescan'));

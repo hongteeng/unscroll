@@ -109,5 +109,17 @@ class CollectionAndChat(unittest.TestCase):
         self.assertEqual(client.post(f'/api/categories/{empty}/delete',json={},headers=h).status_code,200)
         self.assertEqual([c['name'] for c in db.tree()],['Full'])
 
+    def test_chat_links_share_and_short_forms_are_accepted_only_from_chat(self):
+        from unscroll import ingest
+        self.assertEqual(ingest.canonical('https://www.tiktokv.com/share/video/456/')[0],'456')
+        with self.assertRaises(ValueError): ingest.canonical('https://vm.tiktok.com/abc')       # never resolved outside the chat reader
+        with patch.object(ingest,'resolve_short',return_value='https://www.tiktok.com/@a/video/999') as r:
+            res=ingest.add([{'url':'https://vm.tiktok.com/abc','source':'chat'},{'url':'https://www.tiktokv.com/share/video/456/','source':'chat'}])
+        self.assertEqual(res['added'],2); r.assert_called_once()
+        self.assertEqual(db.post('999')['metadata'].get('source'),'chat')
+        db.update('999',metadata={}); ingest.add([{'url':'https://www.tiktok.com/@a/video/999','source':'chat'}])
+        self.assertNotIn('source',db.post('999')['metadata'])    # an existing post keeps how it was first saved
+        with self.assertRaises(ValueError): ingest.resolve_short('https://evil.example/x')
+
 
 if __name__=='__main__': unittest.main()
