@@ -140,23 +140,32 @@ async function captureChatInPage(){
       (document.body.innerText.match(TEXT)||[]).forEach(t=>take(t));
     };
     const wait=()=>new Promise(r=>setTimeout(r,1400));
-    // The message pane is the scrollable element with the most post links; if none has links yet, the biggest one.
+    // The message pane: the scrollable ancestor of TikTok's message list; otherwise the scrollable element with the most post links.
     const LINKS='a[href*="/video/"],a[href*="/photo/"],a[href*="/share/"],a[href*="tiktok.com/t/"],a[href*="vm.tiktok.com"]';
-    const scrollers=[...document.querySelectorAll('*')].filter(n=>n.scrollHeight>n.clientHeight+40&&/auto|scroll/.test(getComputedStyle(n).overflowY));
-    const pane=scrollers.sort((a,b)=>b.querySelectorAll(LINKS).length-a.querySelectorAll(LINKS).length||(b.clientHeight*b.clientWidth)-(a.clientHeight*a.clientWidth))[0]||document.scrollingElement;
+    const scrollable=n=>n.scrollHeight>n.clientHeight+40&&/auto|scroll/.test(getComputedStyle(n).overflowY);
+    let pane=null;
+    for(let n=document.querySelector('[data-e2e="dm-new-message-list"]');n&&!pane;n=n.parentElement)if(scrollable(n))pane=n;
+    if(!pane){
+      const scrollers=[...document.querySelectorAll('*')].filter(scrollable);
+      pane=scrollers.sort((a,b)=>b.querySelectorAll(LINKS).length-a.querySelectorAll(LINKS).length||(b.clientHeight*b.clientWidth)-(a.clientHeight*a.clientWidth))[0]||document.scrollingElement;
+    }
+    // How much has loaded, counting chat items too: a shared post that shows no link must not make us think loading has stopped.
+    const loaded=()=>document.querySelectorAll('[data-e2e="dm-new-chat-item"]').length;
     scan();
     // TikTok loads older messages only when you scroll toward them. Sitting at the very top fires no new scroll event, so step up
     // in screen-sized moves (this also works when the list is laid out bottom-up) and keep going until nothing new arrives.
     let idle=0;
-    for(let i=0;i<400&&idle<6;i++){
-      const before=found.size,height=pane.scrollHeight,top=pane.scrollTop;
+    for(let i=0;i<500&&idle<8;i++){
+      const before=found.size,items=loaded(),height=pane.scrollHeight,top=pane.scrollTop;
       pane.dispatchEvent(new WheelEvent('wheel',{deltaY:-400,bubbles:true,cancelable:true}));
       pane.scrollBy(0,-Math.max(300,pane.clientHeight*.85));
       await wait();scan();
       const moved=pane.scrollTop!==top||pane.scrollHeight!==height;
-      idle=(found.size===before&&!moved)?idle+1:(found.size===before?idle+0.5:0);
+      idle=(found.size===before&&loaded()===items&&!moved)?idle+1:(found.size===before&&loaded()===items?idle+0.5:0);
     }
-    return {posts:[...found.values()]};
+    const cards=[...document.querySelectorAll('[data-e2e="dm-new-shared-video"]')];
+    const stats={cards:cards.length,cardsWithLink:cards.filter(c=>c.querySelector(LINKS)).length,items:loaded()};
+    return {posts:[...found.values()],stats};
   }catch(e){return {error:e.message||'Could not read this chat.'};}
 }
 let stopped=false;
@@ -272,10 +281,10 @@ async function readChat(){
     if(!res)throw new Error('Chrome could not read this page. Refresh it and try again.');
     if(res.error)throw new Error(res.error);
     if(!res.posts.length)throw new Error('No TikTok post links found in this chat. If posts show only as cards, tell me and I will adapt the reader.');
-    if(!confirm(`Found ${res.posts.length} TikTok post link${res.posts.length===1?'':'s'} in this chat. Add the new ones to Unscroll? Only the links are saved, not the messages.`)){el('status').textContent='Cancelled. Nothing was added.';return;}
+    if(!confirm(`Found ${res.posts.length} TikTok post link${res.posts.length===1?'':'s'} in this chat${res.stats?.cards>res.posts.length?` (the chat shows ${res.stats.cards} shared posts, ${res.stats.cards-res.stats.cardsWithLink} of them with no readable link)`:''}. Add the new ones to Unscroll? Only the links are saved, not the messages.`)){el('status').textContent='Cancelled. Nothing was added.';return;}
     const r=await fetch('http://127.0.0.1:8765/api/capture',{method:'POST',headers:{'Content-Type':'application/json','X-Unscroll-Token':token},body:JSON.stringify({posts:res.posts})});
     const data=await r.json();if(!r.ok)throw new Error(data.detail||'Import failed.');
-    el('status').textContent=`${res.posts.length} links found · ${data.added} new · ${data.skipped} already in your library.${data.errors?.length?' Some links could not be used: '+data.errors.slice(0,2).join(' '):''} Open your library to process new posts.`;
+    el('status').textContent=`${res.posts.length} links found${res.stats?.cards?` of ${res.stats.cards} shared posts`:''} · ${data.added} new · ${data.skipped} already in your library.${data.errors?.length?' Some links could not be used: '+data.errors.slice(0,2).join(' '):''} Open your library to process new posts.`;
   }catch(e){el('status').textContent=e.message==='Failed to fetch'?'Could not reach Unscroll. Start the local helper and try again.':e.message;}
   finally{buttons.forEach(id=>el(id).disabled=false);el('token').disabled=false;}
 }
