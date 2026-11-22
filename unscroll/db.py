@@ -115,7 +115,7 @@ def update(post_id, **fields):
 def tree():
     with connect() as c:
         rows = [dict(r) for r in c.execute('SELECT * FROM categories ORDER BY name')]
-        counts = {r[0]:r[1] for r in c.execute('SELECT category_id,COUNT(*) FROM placements GROUP BY category_id')}
+        counts = {r[0]:r[1] for r in c.execute('SELECT category_id,COUNT(*) FROM placements WHERE is_primary=1 GROUP BY category_id')}
     return [dict(r, count=counts.get(r['id'],0), children=[dict(s,count=counts.get(s['id'],0))
             for s in rows if s['parent_id']==r['id']]) for r in rows if r['parent_id'] is None]
 

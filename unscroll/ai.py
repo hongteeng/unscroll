@@ -305,7 +305,7 @@ def category_summary(category_id):
     with db.connect() as c:
         row=c.execute('SELECT name FROM categories WHERE id=?',(category_id,)).fetchone()
         if not row: raise ValueError('Category not found.')
-        entries=[json.loads(r['entry']) for r in c.execute('SELECT p.entry FROM posts p JOIN placements l ON l.post_id=p.id WHERE l.category_id=? AND p.entry IS NOT NULL',(category_id,))]
+        entries=[json.loads(r['entry']) for r in c.execute('SELECT p.entry FROM posts p JOIN placements l ON l.post_id=p.id WHERE l.category_id=? AND l.is_primary=1 AND p.entry IS NOT NULL',(category_id,))]
     if not entries: raise ValueError('This category has no written videos to summarise yet.')
     data={'category':row['name'],'video_count':len(entries),
           'videos':[{'title':e['title'],'key_points':[k['text'] for k in e.get('key_points',[])[:3]],'topics':e.get('topics',[])[:4]} for e in entries]}

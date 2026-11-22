@@ -265,7 +265,8 @@ def posts(q:str='',category:int=0,creator:str='',kind:str='',status:str='',after
         for r in c.execute('SELECT * FROM placements'): links.setdefault(r['post_id'],[]).append(dict(r))
     if category:
         valid={category}|{s['id'] for r in db.tree() if r['id']==category for s in r['children']}
-        rows=[p for p in rows if any(l['category_id'] in valid for l in links.get(p['id'],[]))]
+        # A category page lists only the saves filed here (primary). Extra "also fits" links must not pull in cards that live elsewhere.
+        rows=[p for p in rows if any(l['category_id'] in valid and l['is_primary'] for l in links.get(p['id'],[]))]
     if creator: rows=[p for p in rows if p['creator']==creator]
     if kind: rows=[p for p in rows if p['kind']==kind]
     if status=='ready': rows=[p for p in rows if p['entry']]
@@ -649,7 +650,7 @@ def _cat_name(ident):
 def _summary_view(ident):
     saved=db.setting(f'category_summary:{ident}') or None
     with db.connect() as c:
-        now=c.execute('SELECT COUNT(*) FROM placements WHERE category_id=?',(ident,)).fetchone()[0]
+        now=c.execute('SELECT COUNT(*) FROM placements WHERE category_id=? AND is_primary=1',(ident,)).fetchone()[0]
         name=(c.execute('SELECT name FROM categories WHERE id=?',(ident,)).fetchone() or [''])[0]
     if saved and saved.get('name')!=name: saved=None   # the id now belongs to a different category
     return {'text':saved['text'] if saved else '','written_for':saved['count'] if saved else 0,'updated':saved['at'] if saved else None,'now':now}
