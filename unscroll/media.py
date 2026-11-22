@@ -3,10 +3,11 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
-from . import db
+from . import cookies, db
 
 
 def command(args,timeout=600):
@@ -17,6 +18,19 @@ def command(args,timeout=600):
         raise ValueError(f'{args[0]} is missing. Run Setup.command to install the media tools.') from None
     except subprocess.CalledProcessError:
         raise ValueError(f'{args[0]} could not process this media. The post may be unavailable or the file unsupported.') from None
+
+
+_retry=threading.local()
+
+
+def new_ydl(opts):
+    """A yt-dlp instance. During the retry that follows a login wall it also carries the person's TikTok cookies."""
+    from yt_dlp import YoutubeDL
+    y=YoutubeDL(opts)
+    if getattr(_retry,'with_cookies',False):
+        try: cookies.apply(y)
+        except cookies.CookieError as e: raise FetchError('cookies',str(e)) from None
+    return y
 
 
 def ydl_options(folder):
@@ -67,10 +81,9 @@ def _slides_via_ytdlp(post):
     """TikTok serves photo posts only after a JS challenge. yt-dlp already solves it, so reuse its page fetch.
     Uses a private yt-dlp method, so any failure falls back to the plain page request."""
     try:
-        from yt_dlp import YoutubeDL
         vid=post['id']
         url=f"https://www.tiktok.com/@{post.get('creator') or '_'}/video/{vid}"
-        with YoutubeDL({'quiet':True,'no_warnings':True}) as y:
+        with new_ydl({'quiet':True,'no_warnings':True}) as y:
             data,_status=y.get_info_extractor('TikTok')._extract_web_data_and_status(url,vid,fatal=False)
         slides=[]
         for image in ((data or {}).get('imagePost') or {}).get('images',[]):
@@ -79,6 +92,7 @@ def _slides_via_ytdlp(post):
             if urls: slides.append(urls[0])
         if slides and len(slides)<=100: return slides,(data.get('desc') or post['caption'])
     except Exception as e:
+        if isinstance(e,FetchError): raise
         # A login wall is a real answer, not a reason to fall back: say so, so the post reports its true cause.
         if classify_fetch_error(str(e))=='login': raise FetchError('login') from None
     return None
@@ -118,7 +132,9 @@ def carousel_details(post):
 
 
 FETCH_MESSAGES={
-    'login':'TikTok only shows this video to logged-in viewers (it is marked as sensitive). Attach a copy of the video under Attach media on the post, or set UNSCROLL_COOKIES_FILE to your own exported cookies and process it again.',
+    'login':'TikTok only shows this video to logged-in viewers (it is marked as sensitive). Attach a copy of the video under Attach media on the post, set UNSCROLL_COOKIES_FROM_BROWSER (for example chrome) to use your own TikTok login, or set UNSCROLL_COOKIES_FILE to your own exported cookies, then process it again.',
+    'login_cookies':"TikTok still refused this video with your browser's TikTok login. Check that you are signed in to TikTok in that browser and that your account may view sensitive posts, or attach a copy of the video under Attach media on the post.",
+    'cookies':"Unscroll could not use your browser's TikTok login.",
     'unavailable':'TikTok says this video is unavailable. It may have been deleted or made private. Attach a copy of the video if you have one.',
     'rate_limited':'TikTok is limiting requests right now. Wait a few minutes, then process it again.',
     'other':'TikTok video capture failed for a reason Unscroll does not recognise. It may need a newer yt-dlp. Attach a local copy of the video, or try again later.'}
@@ -126,9 +142,9 @@ FETCH_MESSAGES={
 
 class FetchError(ValueError):
     """A failed TikTok fetch with a cause the UI can explain. `code` says whether trying again can help."""
-    def __init__(self,code):
+    def __init__(self,code,message=None):
         self.code=code if code in FETCH_MESSAGES else 'other'
-        super().__init__(FETCH_MESSAGES[self.code])
+        super().__init__(message or FETCH_MESSAGES[self.code])
 
 
 def classify_fetch_error(text):
@@ -142,7 +158,7 @@ def classify_fetch_error(text):
 def guard_fetch(post):
     """Skip a request that is certain to fail: a login-gated post with no cookies and no attached copy."""
     meta=post.get('metadata') or {}
-    if meta.get('fetch_blocked')=='login' and not meta.get('local_files') and not os.environ.get('UNSCROLL_COOKIES_FILE'):
+    if meta.get('fetch_blocked')=='login' and not meta.get('local_files') and not os.environ.get('UNSCROLL_COOKIES_FILE') and not cookies.enabled():
         raise FetchError('login')
 
 
@@ -173,9 +189,8 @@ def video_url(post):
 
 def fetch_video(post,folder):
     """Download the post's video, or its audio alone when TikTok serves a slideshow's music track."""
-    from yt_dlp import YoutubeDL
     url=video_url(post)
-    with YoutubeDL({'quiet':True,'no_warnings':True}) as y:
+    with new_ydl({'quiet':True,'no_warnings':True}) as y:
         probe=y.extract_info(url,download=False)
     if not offers_video(probe):
         # TikTok serves a photo post as its music track alone. Saved as a video, it is really a slideshow:
@@ -184,11 +199,11 @@ def fetch_video(post,folder):
         if found:
             urls,caption=found
             return save_slides(urls,folder),caption,{'kind':'carousel','slides_complete':True,'slide_count':len(urls)}
-        with YoutubeDL(audio_options(folder)) as y:
+        with new_ydl(audio_options(folder)) as y:
             info=y.extract_info(url,download=True)
         files=[p for p in folder.iterdir() if p.is_file()]
     else:
-        with YoutubeDL(ydl_options(folder)) as y:
+        with new_ydl(ydl_options(folder)) as y:
             info=y.extract_info(url,download=True)
         files=[p for p in folder.iterdir() if p.suffix.lower() in ('.mp4','.webm','.mkv','.mov','.m4v')]
     if not files: raise ValueError('No complete video was downloaded.')
@@ -205,6 +220,24 @@ def acquire(post,folder):
             raise ValueError('Temporary local media was already removed. Attach it again, or retry fetching the original post.')
         for i,p in enumerate(files): shutil.copyfile(p,folder/f'{i:04d}{p.suffix.lower()}')
         return sorted(folder.iterdir()),post['caption'],{}
+    try:
+        return acquire_remote(post,folder)
+    except FetchError as e:
+        if e.code!='login' or not cookies.enabled(): raise
+    # A login wall, and the person has opted in to using their own TikTok login: try once more with it.
+    for leftover in folder.iterdir():
+        shutil.rmtree(leftover,ignore_errors=True) if leftover.is_dir() else leftover.unlink(missing_ok=True)
+    _retry.with_cookies=True
+    try:
+        return acquire_remote(post,folder)
+    except FetchError as e:
+        if e.code=='login': raise FetchError('login_cookies') from None
+        raise
+    finally:
+        _retry.with_cookies=False
+
+
+def acquire_remote(post,folder):
     try:
         if post['kind']=='carousel':
             try:
