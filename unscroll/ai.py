@@ -351,7 +351,7 @@ class Assignments(BaseModel):
 def build_plan():
     """Turn the conversation into a concrete list of moves. Nothing is applied: the plan waits for the user's approval."""
     history=db.setting('chat_history',[]) or []
-    talk=[m for m in history if not m['text'].startswith(('This is the plan','Plan approved'))][-12:]
+    talk=[m for m in history if not m['text'].startswith(('This is the plan','Here is the plan','Plan approved'))][-12:]
     if not talk: raise ValueError('Talk to the AI about how you want your saves organised first, then build the plan.')
     lib=_library(); tree=db.tree()
     blueprint=ask('chat','From this conversation, list the final categories the person wants their saves in: names only. Use the categories the assistant last proposed unless the person changed them, and keep any existing category they did not ask to remove.',
@@ -361,8 +361,11 @@ def build_plan():
     by_cat={}
     for start in range(0,len(lib),60):
         batch=lib[start:start+60]
-        got=ask('chat','Assign each save to the single best category from "categories", judged by its real subject, or to "KEEP" to leave it where it is. Use only the exact category names given. Return every id.',
-            {'categories':cats,'saves':batch,'conversation':talk[-4:]},Assignments)
+        got=ask('chat',('Decide which saves to move. The default for every save is "KEEP" (leave it where it is). '
+            'Give a save a category only if the person\'s messages in "conversation" ask for that kind of video to go there, either by naming the category or the topic, or by accepting the assistant\'s suggestion. '
+            'Later messages override earlier ones, and "do not move X" always wins. Never move a save just because another category would fit it slightly better, and never reorganise anything the person did not ask about. '
+            'Use only the exact category names given. Return every id.'),
+            {'categories':cats,'saves':batch,'conversation':talk},Assignments)
         have={x['id']:x for x in batch}
         for it in got.items:
             if it.id in have and it.category.strip().casefold() in folded and (have[it.id]['filed_under'].casefold()!=it.category.strip().casefold()):
