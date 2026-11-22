@@ -20,7 +20,7 @@ def command(args,timeout=600):
 
 
 def ydl_options(folder):
-    opts={'outtmpl':str(folder/'%(id)s.%(ext)s'),'format':'best[height<=720]/best',
+    opts={'outtmpl':str(folder/'%(id)s.%(ext)s'),'format':'best[height<=720][vcodec!=none]/best[vcodec!=none]/best',
           'noplaylist':True,'quiet':True,'no_warnings':True,'retries':2,'socket_timeout':30,
           'max_filesize':512*1024*1024,'sleep_interval':2,'max_sleep_interval':4,
           'restrictfilenames':True,'overwrites':True}
@@ -78,8 +78,9 @@ def _slides_via_ytdlp(post):
             urls=ref.get('urlList') or ref.get('url_list') or []
             if urls: slides.append(urls[0])
         if slides and len(slides)<=100: return slides,(data.get('desc') or post['caption'])
-    except Exception:
-        pass
+    except Exception as e:
+        # A login wall is a real answer, not a reason to fall back: say so, so the post reports its true cause.
+        if classify_fetch_error(str(e))=='login': raise FetchError('login') from None
     return None
 
 
@@ -145,6 +146,56 @@ def guard_fetch(post):
         raise FetchError('login')
 
 
+def save_slides(urls,folder):
+    """Download an ordered slide set into the working folder."""
+    for i,url in enumerate(urls):
+        fetch_image(url,folder/f'{i:04d}.jpg')
+        time.sleep(.3)
+    return sorted(folder.iterdir())
+
+
+def offers_video(info):
+    """Whether TikTok is actually serving a video track for this post."""
+    return any(f.get('vcodec') not in (None,'none') for f in (info.get('formats') or []))
+
+
+def audio_options(folder):
+    """A post with no video track still has its audio, which carries the spoken content."""
+    opts=ydl_options(folder)
+    opts['format']='bestaudio/best'
+    return opts
+
+
+def video_url(post):
+    """TikTok serves one id under both /photo/ and /video/, but yt-dlp only accepts /video/."""
+    return re.sub(r'/photo/(\d+)',r'/video/\1',post['url'])
+
+
+def fetch_video(post,folder):
+    """Download the post's video, or its audio alone when TikTok serves a slideshow's music track."""
+    from yt_dlp import YoutubeDL
+    url=video_url(post)
+    with YoutubeDL({'quiet':True,'no_warnings':True}) as y:
+        probe=y.extract_info(url,download=False)
+    if not offers_video(probe):
+        # TikTok serves a photo post as its music track alone. Saved as a video, it is really a slideshow:
+        # take the slides when they can be read, and otherwise keep the audio rather than losing the post.
+        found=_slides_via_ytdlp(post)
+        if found:
+            urls,caption=found
+            return save_slides(urls,folder),caption,{'kind':'carousel','slides_complete':True,'slide_count':len(urls)}
+        with YoutubeDL(audio_options(folder)) as y:
+            info=y.extract_info(url,download=True)
+        files=[p for p in folder.iterdir() if p.is_file()]
+    else:
+        with YoutubeDL(ydl_options(folder)) as y:
+            info=y.extract_info(url,download=True)
+        files=[p for p in folder.iterdir() if p.suffix.lower() in ('.mp4','.webm','.mkv','.mov','.m4v')]
+    if not files: raise ValueError('No complete video was downloaded.')
+    return files,info.get('description') or post['caption'],{
+        'kind':'video','creator':info.get('uploader') or post['creator'],'posted_date':info.get('upload_date') or post['posted_date']}
+
+
 def acquire(post,folder):
     folder.mkdir(parents=True,exist_ok=True)
     local=(post['metadata'] or {}).get('local_files',[])
@@ -154,20 +205,19 @@ def acquire(post,folder):
             raise ValueError('Temporary local media was already removed. Attach it again, or retry fetching the original post.')
         for i,p in enumerate(files): shutil.copyfile(p,folder/f'{i:04d}{p.suffix.lower()}')
         return sorted(folder.iterdir()),post['caption'],{}
-    if post['kind']=='carousel':
-        urls,caption,complete=carousel_details(post)
-        for i,url in enumerate(urls):
-            fetch_image(url,folder/f'{i:04d}.jpg')
-            time.sleep(.3)
-        return sorted(folder.iterdir()),caption,{'slides_complete':complete,'slide_count':len(urls)}
-    from yt_dlp import YoutubeDL
     try:
-        with YoutubeDL(ydl_options(folder)) as y:
-            info=y.extract_info(post['url'],download=True)
-        files=[p for p in folder.iterdir() if p.suffix.lower() in ('.mp4','.webm','.mkv','.mov','.m4v')]
-        if not files: raise ValueError('No complete video was downloaded.')
-        return files,info.get('description') or post['caption'],{
-            'creator':info.get('uploader') or post['creator'],'posted_date':info.get('upload_date') or post['posted_date']}
+        if post['kind']=='carousel':
+            try:
+                urls,caption,complete=carousel_details(post)
+            except FetchError: raise
+            except ValueError as no_slides:
+                # Saved as a photo post, but TikTok exposes no slides for it. It may really be a video,
+                # so try that before giving up; if it is not one either, report the original cause.
+                try: return fetch_video(post,folder)
+                except FetchError: raise
+                except ValueError: raise no_slides from None
+            return save_slides(urls,folder),caption,{'kind':'carousel','slides_complete':complete,'slide_count':len(urls)}
+        return fetch_video(post,folder)
     except Exception as e:
         if isinstance(e,ValueError): raise
         raise FetchError(classify_fetch_error(str(e))) from e
@@ -203,6 +253,8 @@ def thumb_from_files(post_id,files):
 
 def extract(post,folder):
     files,caption,details=acquire(post,folder)
+    # acquire may find that a post saved as a video is really a slideshow, and say so here.
+    kind=details.get('kind') or post['kind']
     try: thumb_from_files(post['id'],files)
     except Exception: pass  # a missing cover never blocks extraction
     import pytesseract
@@ -214,7 +266,7 @@ def extract(post,folder):
             image=ImageOps.exif_transpose(image).convert('RGB')
             image.thumbnail((2200,2200))
             return pytesseract.image_to_string(image,lang='eng',config='--psm 11').strip()
-    if post['kind']=='carousel':
+    if kind=='carousel':
         for i,path in enumerate(files):
             text=ocr(path)
             segments.append({'label':f'Slide {i+1}','text':text})
@@ -234,16 +286,20 @@ def extract(post,folder):
                 if s.text.strip(): segments.append({'label':f'Speech {s.start:.1f}–{s.end:.1f}s','text':s.text.strip()})
             del model
             gc.collect()
-        frames=folder/'frames'; frames.mkdir()
-        command(['ffmpeg','-nostdin','-v','error','-i',str(media),'-vf','fps=1,scale=960:-2','-threads','2',str(frames/'%06d.jpg')],3600)
-        previous=''
-        for i,path in enumerate(sorted(frames.glob('*.jpg'))):
-            text=ocr(path)
-            if text and text!=previous: segments.append({'label':f'On screen ~{i}s','text':text})
-            previous=text
-        warnings.append('On-screen text is sampled once per second; brief overlays can be missed. Speech and OCR may contain errors.')
+        if any(s.get('codec_type')=='video' for s in info.get('streams',[])):
+            frames=folder/'frames'; frames.mkdir()
+            command(['ffmpeg','-nostdin','-v','error','-i',str(media),'-vf','fps=1,scale=960:-2','-threads','2',str(frames/'%06d.jpg')],3600)
+            previous=''
+            for i,path in enumerate(sorted(frames.glob('*.jpg'))):
+                text=ocr(path)
+                if text and text!=previous: segments.append({'label':f'On screen ~{i}s','text':text})
+                previous=text
+            warnings.append('On-screen text is sampled once per second; brief overlays can be missed. Speech and OCR may contain errors.')
+        else:
+            warnings.append('TikTok served only this post\'s audio, so there is no on-screen text: the transcript and caption are everything that could be extracted.')
     source={'caption':caption,'segments':segments,'warnings':warnings,'extracted_at':time.time()}
     fields={'caption':caption,'source':source,'status':'extracted','error':''}
+    if kind!=post['kind']: fields['kind']=kind  # a slideshow saved as a video is recorded as what it is
     for k in ('creator','posted_date'):
         if details.get(k): fields[k]=details[k]
     db.update(post['id'],**fields)

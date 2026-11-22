@@ -40,21 +40,81 @@ class Placement(BaseModel):
     extra_ids: list[int] = Field(max_length=10)
 
 
+def _as_list(value):
+    """Coax the shapes Claude returns instead of a list into one, without inventing content."""
+    if isinstance(value,list): return value
+    if isinstance(value,str):
+        try: return _as_list(json.loads(value))
+        except ValueError: return value
+    if isinstance(value,dict):
+        # A lone object where a list belongs, or a list keyed by its indices.
+        if all(k.isdigit() for k in value): return [value[k] for k in sorted(value,key=int)]
+        return [value]
+    return value
+
+
+def _cap(field):
+    """The declared maximum length of a list field, if it has one."""
+    return next((getattr(m,'max_length',None) for m in field.metadata if getattr(m,'max_length',None) is not None),None)
+
+
 def _decode_list_fields(raw,schema):
-    """Claude sometimes returns a list field as a JSON string. Decode it before validating."""
+    """Claude sometimes returns a list field as a JSON string or a bare object. Reshape before validating.
+
+    An over-long list is cut to the declared cap rather than failing the whole entry: the cap is this
+    app's own limit on how much it shows, and the prompt asks for the most important items first."""
     if not isinstance(raw,dict): return raw
     out=dict(raw)
     for name,field in schema.model_fields.items():
-        if getattr(field.annotation,'__origin__',None) is list and isinstance(out.get(name),str):
-            try: out[name]=json.loads(out[name])
-            except ValueError: pass
+        if getattr(field.annotation,'__origin__',None) is list and name in out:
+            value=_as_list(out[name])
+            limit=_cap(field)
+            if isinstance(value,list) and limit is not None and len(value)>limit: value=value[:limit]
+            out[name]=value
     return out
 
 
-def ask(purpose, system, data, schema):
+# Statuses worth another attempt: the service is busy or pacing us, not refusing the request.
+RETRY_STATUS={408,409,425,429,500,502,503,504,529}
+ATTEMPTS=5
+
+
+def _wait_for(response,attempt):
+    """Honour the server's own pacing when it gives one, else back off exponentially."""
+    try: asked=float(response.headers.get('retry-after',''))
+    except ValueError: asked=0.0
+    return min(max(asked,2**attempt),60)
+
+
+def _send(request):
+    """POST to Claude, waiting out transient overload. Raises ValueError with a plain cause."""
     import httpx
     key=os.environ.get('ANTHROPIC_API_KEY','').strip()
     if not key: raise ValueError('Add your Claude API key using Setup.command, then restart Unscroll.')
+    status=0
+    for attempt in range(ATTEMPTS):
+        try:
+            response=httpx.post('https://api.anthropic.com/v1/messages',timeout=httpx.Timeout(180,connect=30),
+                headers={'x-api-key':key,'anthropic-version':'2023-06-01'},json=request)
+        except (httpx.ConnectTimeout,httpx.ConnectError):
+            if attempt==ATTEMPTS-1:
+                raise ValueError('Could not connect to Claude after several attempts. Check your internet connection and access to api.anthropic.com, then retry. Extracted source text is kept.') from None
+            time.sleep(min(2**attempt,60)); continue
+        except httpx.TimeoutException:
+            raise ValueError('Claude did not finish responding in time. Extracted source text is kept; retry this post. The request may already have used API credits.') from None
+        except httpx.RequestError:
+            raise ValueError('The connection to Claude was interrupted. Extracted source text is kept; check your network and retry.') from None
+        if response.status_code==200: return response
+        status=response.status_code
+        if status in RETRY_STATUS and attempt<ATTEMPTS-1:
+            time.sleep(_wait_for(response,attempt)); continue
+        break
+    if status in RETRY_STATUS:
+        raise ValueError(f'Claude API returned {status} on all {ATTEMPTS} attempts. The service is busy or rate-limiting; wait a few minutes and retry. No credentials are included in this error.')
+    raise ValueError(f'Claude API returned {status}. Check the API key, credits and model in .env. No credentials are included in this error.')
+
+
+def ask(purpose, system, data, schema):
     encoded=json.dumps(data,ensure_ascii=False)
     if len(encoded)>600000: raise ValueError('Input exceeds the safe request size; no source text was silently dropped.')
     request={
@@ -64,23 +124,8 @@ def ask(purpose, system, data, schema):
         'tool_choice':{'type':'tool','name':'record'},
         'messages':[{'role':'user','content':encoded}]}
     problem=''
-    for attempt in range(2):
-        for connection_attempt in range(2):
-            try:
-                response=httpx.post('https://api.anthropic.com/v1/messages',timeout=httpx.Timeout(180,connect=30),
-                    headers={'x-api-key':key,'anthropic-version':'2023-06-01'},json=request)
-                break
-            except (httpx.ConnectTimeout,httpx.ConnectError):
-                if connection_attempt==1:
-                    raise ValueError('Could not connect to Claude after two attempts. Check your internet connection and access to api.anthropic.com, then retry. Extracted source text is kept.') from None
-                time.sleep(1)
-            except httpx.TimeoutException:
-                raise ValueError('Claude did not finish responding in time. Extracted source text is kept; retry this post. The request may already have used API credits.') from None
-            except httpx.RequestError:
-                raise ValueError('The connection to Claude was interrupted. Extracted source text is kept; check your network and retry.') from None
-        if response.status_code!=200:
-            raise ValueError(f'Claude API returned {response.status_code}. Check the API key, credits and model in .env. No credentials are included in this error.')
-        payload=response.json()
+    for attempt in range(3):
+        payload=_send(request).json()
         usage=payload.get('usage',{})
         with db.connect() as c:
             c.execute('INSERT INTO usage(purpose,input_tokens,output_tokens,created) VALUES(?,?,?,?)',
@@ -93,7 +138,7 @@ def ask(purpose, system, data, schema):
             except ValidationError as e:
                 problem='; '.join(f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()[:4])
         request['system']+=' The previous result did not match the schema. Generate a fresh record using exactly the declared fields, without extras such as label. Use only the supplied source. Fix these problems: '+(problem or 'no record was returned')+'.'
-    raise ValueError('Claude returned an invalid structured response twice ('+(problem or 'no record returned')+'). No invalid entry was saved. Retry this post; extracted source text is kept.')
+    raise ValueError('Claude returned an invalid structured response on every attempt ('+(problem or 'no record returned')+'). No invalid entry was saved. Retry this post; extracted source text is kept.')
 
 
 def source_text(source):
@@ -138,6 +183,7 @@ def retitle(entry):
 
 
 def write(source):
+    source,trim_note=fit_source(source)
     result=ask('entry', '''Write ONE faithful entry for this post, using only its caption and extracted segments.
 '''+TITLE_RULE+'''
 Use 3–7 key points when the source supports them. When it does not, use fewer (even zero), set thin=true and explain.
@@ -148,7 +194,44 @@ Hard limits: at most 7 key points, 12 actions, 40 specifics and 12 topics. When 
 Text may be incomplete or transcription/OCR may be wrong: describe uncertainty; do not fill gaps.
 Recommend downloading only when substantive, actionable material merits offline reference. This is not a quality certification.
 If extraction warnings mention missing slides or sparse frames, retain that limitation in uncertainty.''',source,Entry)
-    return verify(result,source)
+    entry=verify(result,source)
+    if trim_note: entry['uncertainty']=' '.join(x for x in [entry['uncertainty'].strip(),trim_note] if x)
+    return entry
+
+
+SOURCE_BUDGET=500000
+
+
+def fit_source(source):
+    """Bring one post's extracted text inside what a single request can carry.
+
+    Repeated on-screen text is collapsed first, since per-second OCR samples the same overlay
+    many times and that costs room without adding content. Only if it still does not fit is the
+    tail dropped. Either way the entry says what was left out: nothing is removed silently."""
+    segments=list(source.get('segments') or [])
+    def sized(segs): return len(json.dumps({**source,'segments':segs},ensure_ascii=False))
+    if sized(segments)<=SOURCE_BUDGET: return source,''
+    seen=set(); deduped=[]
+    for seg in segments:
+        key=re.sub(r'\s+',' ',seg.get('text','')).strip().casefold()
+        if key and key in seen: continue
+        if key: seen.add(key)
+        deduped.append(seg)
+    notes=[]
+    if len(deduped)<len(segments):
+        notes.append(f'{len(segments)-len(deduped)} of {len(segments)} extracted segments repeated text already present and were collapsed.')
+    kept=deduped
+    if sized(kept)>SOURCE_BUDGET:
+        kept=[]
+        for seg in deduped:
+            if sized(kept+[seg])>SOURCE_BUDGET: break
+            kept.append(seg)
+        notes.append(f'This post produced more text than one request can carry, so the last {len(deduped)-len(kept)} of {len(deduped)} remaining segments were left out of the entry.')
+    note=' '.join(notes)
+    trimmed=dict(source)
+    trimmed['segments']=kept
+    trimmed['warnings']=list(source.get('warnings') or [])+[note]
+    return trimmed,note
 
 
 def propose():
@@ -169,20 +252,8 @@ def propose():
 
 def converse(system, messages):
     """Plain conversation with Claude: no forced tool, no schema. Returns the reply text."""
-    import httpx
-    key=os.environ.get('ANTHROPIC_API_KEY','').strip()
-    if not key: raise ValueError('Add your Claude API key using Setup.command, then restart Unscroll.')
     request={'model':os.environ.get('UNSCROLL_CLAUDE_MODEL','claude-haiku-5-5'),'max_tokens':4000,'system':system,'messages':messages}
-    try:
-        response=httpx.post('https://api.anthropic.com/v1/messages',timeout=httpx.Timeout(180,connect=30),
-            headers={'x-api-key':key,'anthropic-version':'2023-06-01'},json=request)
-    except httpx.TimeoutException:
-        raise ValueError('Claude did not finish responding in time. Try again.') from None
-    except httpx.RequestError:
-        raise ValueError('Could not reach Claude. Check your internet connection and try again.') from None
-    if response.status_code!=200:
-        raise ValueError(f'Claude API returned {response.status_code}. Check the API key, credits and model in .env.')
-    payload=response.json(); usage=payload.get('usage',{})
+    payload=_send(request).json(); usage=payload.get('usage',{})
     with db.connect() as c:
         c.execute('INSERT INTO usage(purpose,input_tokens,output_tokens,created) VALUES(?,?,?,?)',('chat',usage.get('input_tokens',0),usage.get('output_tokens',0),time.time()))
     text=''.join(x.get('text','') for x in payload.get('content',[]) if x.get('type')=='text').strip()
