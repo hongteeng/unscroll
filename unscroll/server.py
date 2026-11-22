@@ -203,7 +203,7 @@ def state():
         creators=[r[0] for r in c.execute("SELECT DISTINCT creator FROM posts WHERE creator!='' ORDER BY creator")]
     return {'counts':counts,'job_counts':job_counts,'jobs':jobs,'paused':db.setting('paused',True),
             'tree':db.tree(),'proposal':db.setting('proposal'),'usage':usage,'creators':creators,
-            'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture'),'guidance':db.setting('category_guidance',''),'chat':chat_view()}
+            'search_warning':db.setting('search_warning',''),'last_capture':db.setting('last_capture'),'guidance':db.setting('category_guidance',''),'profile':db.setting('profile','') or '','chat':chat_view()}
 
 
 _SMALL={'a','i','to','in','of','it','is','me','my','we','up','on','at','or','if','so','no','do','go','be','an','as','by','he','us','you','how','the','and','for','are','not','but'}
@@ -417,6 +417,17 @@ def local_media(ident:str,files:list[UploadFile]=File(...)):
 
 class Guidance(BaseModel):
     guidance:str=Field(default='',max_length=2000)
+
+
+class Profile(BaseModel):
+    profile:str=Field(default='',max_length=4000)
+
+
+@app.post('/api/profile')
+def save_profile(body:Profile):
+    """The person's own description of who they are, used by the Organise with AI chat."""
+    db.put_setting('profile',body.profile.strip())
+    return {'profile':body.profile.strip(),'message':'Saved. The AI will use this from your next message.'}
 
 
 @app.post('/api/categories/propose')

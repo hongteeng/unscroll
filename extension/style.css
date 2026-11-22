@@ -249,3 +249,7 @@ input[type=checkbox]{accent-color:var(--ink)}
 #cat-summary-body p{margin:0 0 12px}
 .summary-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px 14px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}
 .summary-foot .button{margin-left:auto}
+.about{margin:10px 0;border:1px solid var(--line);border-radius:var(--r);padding:8px 10px}
+.about summary{cursor:pointer;font-weight:600;font-size:14px}
+.about textarea{width:100%;box-sizing:border-box;margin-top:8px;resize:vertical;font:inherit;font-size:14px;line-height:1.45;padding:9px 10px;border:1px solid var(--line);border-radius:var(--r)}
+.about-row{display:flex;align-items:center;gap:10px;margin-top:8px}

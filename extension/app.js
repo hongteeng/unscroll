@@ -176,7 +176,8 @@ document.addEventListener('click',event=>action(async()=>{
   if(b.id==='move-selected'){const v=$('#move-target').value;if(!v)return toast('Choose where to move the selected cards.');let body={ids:[...state.selected]};if(v==='new'){const name=prompt('Name for the new category:');if(!name||!name.trim())return;body.name=name.trim();}else body.category_id=Number(v);const r=await api('posts/move-many',body);toast(r.message);state.selected.clear();$('#move-target').value='';await refresh();return;}
   if(b.id==='download-selected'){const r=await api('download',{ids:[...state.selected]});toast(`${r.queued} selected downloads queued.`);return refresh();}
   if(b.id==='pause'||b.id==='resume'){toast((await api(b.id,{})).message);return refresh();}
-  if(b.id==='suggest-cats'){renderChat();show('#chat-dialog');return $('#chat-input').focus();}
+  if(b.id==='suggest-cats'){renderChat();const about=$('#about-input');if(about&&document.activeElement!==about)about.value=state.data.profile||'';$('#about-details').open=!(state.data.profile||'').trim();$('#about-status').textContent='';show('#chat-dialog');return $('#chat-input').focus();}
+  if(b.id==='about-save'){const st=$('#about-status');try{const r=await api('profile',{profile:$('#about-input').value});state.data.profile=r.profile;st.textContent=r.message;}catch(e){st.textContent='Not saved: '+(e.message||'unknown error');}return;}
   if(b.id==='chat-send')return sendChat();
   if(b.hasAttribute('data-chat-apply')){state.data.chat=await api('categories/chat/apply',{});await refresh();return renderChat();}
   if(b.hasAttribute('data-chat-pick')){state.planOpen=true;const dt=$('#plan-details');if(dt){dt.open=true;dt.scrollIntoView({block:'nearest'});}return;}
