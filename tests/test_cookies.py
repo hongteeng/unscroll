@@ -22,7 +22,7 @@ def browser_jar(*domains):
 class Base(unittest.TestCase):
     def setUp(self):
         cookies.forget()
-        self.env=patch.dict(os.environ,{cookies.ENV:'chrome'});self.env.start()
+        self.env=patch.dict(os.environ,{cookies.ENV:'chrome','UNSCROLL_TESTING':'0'});self.env.start()
     def tearDown(self):
         self.env.stop();cookies.forget()
 
@@ -55,6 +55,12 @@ class Scope(unittest.TestCase):
 
 
 class Reading(Base):
+    def test_a_test_run_never_touches_a_real_browser(self):
+        with patch.dict(os.environ,{'UNSCROLL_TESTING':'1'}), \
+             patch('yt_dlp.cookies.extract_cookies_from_browser',side_effect=AssertionError('real browser read')) as read:
+            with self.assertRaisesRegex(cookies.CookieError,'tests run'): cookies.tiktok_cookies()
+        read.assert_not_called()
+
     def test_only_tiktok_cookies_are_kept(self):
         with patch('yt_dlp.cookies.extract_cookies_from_browser',return_value=browser_jar('.tiktok.com','.google.com')):
             kept=cookies.tiktok_cookies()
@@ -70,6 +76,24 @@ class Reading(Base):
             cookies.tiktok_cookies()
             with patch('unscroll.cookies.time.time',return_value=10**10): cookies.tiktok_cookies()
         self.assertEqual(read.call_count,2)
+
+    def test_cookies_are_deleted_from_memory_when_their_time_is_up(self):
+        with patch('yt_dlp.cookies.extract_cookies_from_browser',return_value=browser_jar('.tiktok.com')), \
+             patch('unscroll.cookies.threading.Timer') as timer:
+            cookies.tiktok_cookies()
+        until,=timer.call_args.kwargs['args']
+        self.assertTrue(timer.return_value.daemon)
+        timer.return_value.start.assert_called_once()
+        self.assertIsNotNone(cookies._kept['cookies'])
+        cookies._expire(until)
+        self.assertIsNone(cookies._kept['cookies'])
+
+    def test_an_old_timer_does_not_delete_a_newer_read(self):
+        with patch('yt_dlp.cookies.extract_cookies_from_browser',return_value=browser_jar('.tiktok.com')), \
+             patch('unscroll.cookies.threading.Timer'):
+            cookies.tiktok_cookies()
+        cookies._expire(12345.0)   # a timer from an earlier read
+        self.assertIsNotNone(cookies._kept['cookies'])
 
     def test_a_failed_read_is_not_asked_again_for_every_post(self):
         with patch('yt_dlp.cookies.extract_cookies_from_browser',side_effect=PermissionError('/Users/x/Library/Cookies '+SECRET)) as read:

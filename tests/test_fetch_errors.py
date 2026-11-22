@@ -8,6 +8,18 @@ from unscroll import media
 LOGIN='ERROR: [TikTok] 1: This post may not be comfortable for some audiences. Log in for access.'
 
 
+def setUpModule():
+    """The real .env may switch cookie reading on. These tests are not about it, so it must never apply here."""
+    global _env
+    _env=patch.dict(os.environ,{},clear=False)
+    _env.start()
+    os.environ.pop('UNSCROLL_COOKIES_FROM_BROWSER',None)
+
+
+def tearDownModule():
+    _env.stop()
+
+
 class FetchErrors(unittest.TestCase):
     def test_login_wall_is_recognised(self):
         self.assertEqual(media.classify_fetch_error(LOGIN),'login')

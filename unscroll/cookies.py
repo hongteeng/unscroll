@@ -56,6 +56,8 @@ def tiktok_only(jar):
 
 
 def _read():
+    if os.environ.get('UNSCROLL_TESTING')=='1':
+        raise CookieError('Reading browser cookies is switched off while tests run.')
     from yt_dlp.cookies import extract_cookies_from_browser
     name,profile=setting()
     try:
@@ -84,7 +86,16 @@ def tiktok_cookies():
             _kept['failed_until']=now+FAILURE_PAUSE
             raise
         _kept.update(cookies=cookies,until=now+LIFETIME,failed_until=0.0)
+        timer=threading.Timer(LIFETIME,_expire,args=(now+LIFETIME,))
+        timer.daemon=True
+        timer.start()
         return cookies
+
+
+def _expire(until):
+    """Actually delete the cookies when their time is up, rather than only ignoring them."""
+    with _lock:
+        if _kept['until']==until: _kept.update(cookies=None,until=0.0)
 
 
 def forget():

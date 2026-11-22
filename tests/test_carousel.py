@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -5,6 +6,18 @@ from unittest.mock import patch, MagicMock
 from unscroll import media
 
 POST={'id':'123','url':'https://www.tiktok.com/@a/photo/123','creator':'a','caption':'cap','metadata':{}}
+
+
+def setUpModule():
+    """The real .env may switch cookie reading on. These tests are not about it, so it must never apply here."""
+    global _env
+    _env=patch.dict(os.environ,{},clear=False)
+    _env.start()
+    os.environ.pop('UNSCROLL_COOKIES_FROM_BROWSER',None)
+
+
+def tearDownModule():
+    _env.stop()
 
 
 class Carousel(unittest.TestCase):
