@@ -120,10 +120,16 @@ def tree():
             for s in rows if s['parent_id']==r['id']]) for r in rows if r['parent_id'] is None]
 
 
+def _same_name(name):
+    """Name with case, spaces and punctuation ignored, so TikTok's "practical tips,hacks" is the folder "Practical tips, hacks"."""
+    return ''.join(ch for ch in name.casefold() if ch.isalnum())
+
+
 def ensure_category(name):
-    """Id of the top-level category with this name (any case), creating it if needed. None if it has subcategories."""
+    """Id of the top-level category with this name (ignoring case, spaces and punctuation), creating it if needed. None if it has subcategories."""
     with connect() as c:
-        row=c.execute('SELECT id FROM categories WHERE parent_id IS NULL AND name=? COLLATE NOCASE',(name,)).fetchone()
+        key=_same_name(name)
+        row=next((r for r in c.execute('SELECT id,name FROM categories WHERE parent_id IS NULL ORDER BY id') if key and _same_name(r['name'])==key),None)
         if row:
             return None if c.execute('SELECT 1 FROM categories WHERE parent_id=?',(row['id'],)).fetchone() else row['id']
         return c.execute('INSERT INTO categories(name) VALUES(?)',(name,)).lastrowid

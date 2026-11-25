@@ -27,6 +27,19 @@ class CollectionAndChat(unittest.TestCase):
     def test_second_post_reuses_category_case_insensitively(self):
         ai.place(self.add(12,['Business'])); ai.place(self.add(13,['business']))
         self.assertEqual(len(db.tree()),1); self.assertEqual(db.tree()[0]['count'],2)
+    def test_collection_matches_an_existing_folder_despite_spacing_and_punctuation(self):
+        db.ensure_category('Practical tips, hacks')
+        ai.place(self.add(20,['practical tips,hacks']))
+        self.assertEqual([c['name'] for c in db.tree()],['Practical tips, hacks'])
+        self.assertEqual(db.tree()[0]['count'],1)
+    def test_re_import_never_files_or_moves_an_existing_save(self):
+        self.add(21); db.update('21',entry={'title':'T','key_points':[],'topics':[]},status='written')   # written, not filed
+        self.add(22); db.update('22',entry={'title':'T','key_points':[],'topics':[]},status='categorised')
+        with db.connect() as c: c.execute('INSERT INTO placements VALUES(?,?,1)',('22',db.ensure_category('Mine')))
+        self.add(21,['travel']); self.add(22,['travel'])           # both re-imported with a folder
+        with db.connect() as c:
+            self.assertEqual([dict(r) for r in c.execute('SELECT * FROM jobs')],[])
+            self.assertEqual([r['name'] for r in c.execute('SELECT c.name FROM placements p JOIN categories c ON c.id=p.category_id')],['Mine'])
     def test_no_collection_means_no_default(self):
         self.assertEqual(ai.collection_name(self.add(14)),'')
     def test_plan_appears_in_chat_and_only_a_clear_approval_moves_things(self):
